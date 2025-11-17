@@ -253,9 +253,9 @@ class CrossAttentionPredictor(nn.Module):
         self.embed_dim = embed_dim
         self.dropout_rate = dropout_rate
         self.device = device
-        self.embedding = nn.Embedding(vocab_size, embed_dim)
-        # self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
-        # self.cnn_embedding = CNNTokenization(embed_dim)
+        # self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.cnn_embedding = CNNTokenization(embed_dim)
         # self.mirna_positional_embedding = AdditivePositionalEncoding(max_len=mirna_max_len, d_model=embed_dim)
         # self.mrna_positional_embedding = AdditivePositionalEncoding(max_len=mrna_max_len, d_model=embed_dim)
         self.mirna_encoder = TransformerEncoder(
@@ -300,10 +300,10 @@ class CrossAttentionPredictor(nn.Module):
         # mrna_embedding = self.mrna_positional_embedding(mrna_embedding) # (batch_size, mrna_len, embed_dim)
         
         # add N-gram CNN-encoded embedding
-        # mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2)) # (batch_size, embed_dim, mirna_len)
-        # mrna_cnn_embedding = self.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))  # (batch_size, embed_dim, mrna_len)
-        mirna_embedding = mirna_sn_embedding #+ mirna_cnn_embedding # (batch_size, mirna_len, embed_dim)
-        mrna_embedding = mrna_sn_embedding #+ mrna_cnn_embedding # (batch_size, mrna_len, embed_dim)
+        mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2)) # (batch_size, embed_dim, mirna_len)
+        mrna_cnn_embedding = self.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))  # (batch_size, embed_dim, mrna_len)
+        mirna_embedding = mirna_sn_embedding + mirna_cnn_embedding # (batch_size, mirna_len, embed_dim)
+        mrna_embedding = mrna_sn_embedding + mrna_cnn_embedding # (batch_size, mrna_len, embed_dim)
 
         mirna_embedding = self.mirna_encoder(mirna_embedding, mask=mirna_mask)  # (batch_size, mirna_len, embed_dim)
         mrna_embedding = self.mrna_encoder(mrna_embedding, mask=mrna_mask) # (batch_size, mrna_len, embed_dim)

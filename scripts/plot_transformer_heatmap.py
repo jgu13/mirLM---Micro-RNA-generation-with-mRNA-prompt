@@ -8,8 +8,7 @@ import transformer_model as tm
 import matplotlib.patches as patches
 from matplotlib import colors
 from Data_pipeline import CharacterTokenizer
-
-PROJ_HOME = os.path.expanduser("~/projects/mirLM")
+from Global_parameters import PROJ_HOME, AXIS_FONT_SIZE, TICK_FONT_SIZE, TITLE_FONT_SIZE
 
 def load_model(
         ckpt_name,
@@ -105,7 +104,7 @@ def plot_heatmap(model,
                  miRNA_id,
                  seed_start,
                  seed_end,
-                 figsize=(15,8),
+                 figsize=(12,6),
                  metrics=None,
                  file_name=None,
                  save_plot_dir=os.getcwd()):
@@ -119,19 +118,20 @@ def plot_heatmap(model,
     norm = colors.Normalize(vmin=a, vmax=b)
     # plot attn weights for each head
     # for h in range(attn_weights.shape[0]):
-    w = attn_weights.detach().cpu() #[mRNA len, miRNA len]
+    w = attn_weights.detach().cpu() #[mirna, mrna]
     # 1) zero out anything below a
     w = torch.where(w < a, torch.zeros_like(w), w)
     # 2) clip anything above b
     w = torch.where(w > b, torch.full_like(w, b), w)
     im = sns.heatmap(w.numpy(), 
-                ax=ax,
-                cmap="Blues",#sns.color_palette('mako', as_cmap=True), 
-                xticklabels=mRNA_seq,
-                yticklabels=miRNA_seq,
-                norm=norm,
-                cbar=True)
-    
+            ax=ax,
+            cmap=sns.color_palette('mako', as_cmap=True), # "Blues"
+            xticklabels=mRNA_seq,
+            yticklabels=miRNA_seq,
+            norm=norm,
+            cbar=True
+    )
+
     # get the Colorbar object
     cbar = im.collections[0].colorbar
     # set its tick‐label fontsize to 12
@@ -150,8 +150,8 @@ def plot_heatmap(model,
         while token == '[PAD]':
             i -= 1
             token = miRNA_seq[i]
-        ye = i # seed ends at the 2nd last base
-        ys = ye - seed_len
+        ys = i # seed ends at the 2nd last base
+        ys = ys - seed_len
 
         # draw a red rectangle around those rows
         rect = patches.Rectangle(
@@ -164,41 +164,40 @@ def plot_heatmap(model,
         )
         ax.add_patch(rect)
 
-    ax.set_xlabel(mRNA_id, fontsize=15)
-    ax.set_ylabel(miRNA_id, fontsize=15)
-    ax.tick_params(axis='x', labelsize=12)
-    ax.tick_params(axis='y', labelsize=12)
-    # ax.set_title(f"Head {h+1}", fontsize=10)
-    # fig.suptitle("miRNA-mRNA Cross-Attention Heatmap")
-    if metrics is not None:
-        fig.text(0.5, 0.93, 
-                f"(Binding probability = {metrics['binding_prob']:.3f}, Overlap = {metrics['f1']})", 
-                fontsize=10, ha='center')
+    ax.set_xlabel(mRNA_id, fontsize=AXIS_FONT_SIZE)
+    ax.set_ylabel(miRNA_id, fontsize=AXIS_FONT_SIZE)
+    ax.tick_params(axis='both', labelsize=TICK_FONT_SIZE)
+    # ax.set_title(f"Head {h+1}", fontsize=TITLE_FONT_SIZE-1)
+        # fig.suptitle("miRNA-mRNA Cross-Attention Heatmap")
+    # if metrics is not None:
+    #     fig.text(0.5, 0.93, 
+    #             f"Binding probability = {metrics['binding_prob']:.3f}, F1 Score = {metrics['f1']}", 
+    #             fontsize=TITLE_FONT_SIZE, ha='center')
     if file_name is not None:
-        fig.savefig(file_name, dpi=800, bbox_inches='tight')
-    else:
-        file_name = os.path.join(save_plot_dir, f"binding_span_{mRNA_id}_{miRNA_id}_heatmap_w_CNN.png")
-        fig.savefig(file_name, dpi=800, bbox_inches='tight')
-        print(f"Heatmap is saved to {file_name}")
+        fig.savefig(file_name, dpi=500, bbox_inches='tight')
+    # else:
+    #     file_name = os.path.join(save_plot_dir, f"binding_span_{mRNA_id}_{miRNA_id}_heatmap_w_CNN_regenerated.svg")
+    #     fig.savefig(file_name, dpi=500, bbox_inches='tight')
+    #     print(f"Heatmap is saved to {file_name}")
     return fig, ax
 
 def main():
     mirna_max_len   = 24
-    mrna_max_len    = 500
+    mrna_max_len    = 30
     predict_span    = True
     predict_binding = True
     device          = "cuda:3" 
     args_dict = {"mirna_max_len": mirna_max_len,
                  "mrna_max_len": mrna_max_len,
                  "device": device,
-                 "embed_dim": 1024,
-                 "ff_dim": 2048,
+                 "embed_dim": 256,
+                 "ff_dim": 512,
                  "predict_span": predict_span,
                  "predict_binding": predict_binding,}
     
     data_dir = os.path.join(PROJ_HOME, 'TargetScan_dataset')
     test_datapath = os.path.join(PROJ_HOME, data_dir, 
-                                 "TargetScan_train_500_randomized_start.csv")
+                                 "TargetScan_train_30_randomized_start.csv")
     test_data  = pd.read_csv(test_datapath, sep=',')
     mRNA_seqs  = test_data[["mRNA sequence"]].values
     miRNA_seqs = test_data[["miRNA sequence"]].values
@@ -208,11 +207,11 @@ def main():
     seed_starts = test_data[["seed start"]].values
     seed_ends   = test_data[["seed end"]].values
     
-    model = load_model(ckpt_name="best_composite_0.9262_0.9866_epoch9.pth",
+    model = load_model(ckpt_name="best_composite_0.9911_0.9977_epoch11.pth",
                        **args_dict)
 
     # Testing the first sequence
-    i=15 # row number - 2
+    i=299857 # row number - 2
     mRNA_seq  = mRNA_seqs[i][0]
     miRNA_seq = miRNA_seqs[i][0]
     mRNA_ID   = mRNA_IDs[i][0]

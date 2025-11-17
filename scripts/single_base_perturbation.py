@@ -11,7 +11,8 @@ import transformer_model as tm
 from Data_pipeline import CharacterTokenizer
 from plot_transformer_heatmap import plot_heatmap
 
-PROJ_HOME = os.path.expanduser("~/projects/mirLM")
+from Global_parameters import PROJ_HOME, AXIS_FONT_SIZE, TICK_FONT_SIZE, TITLE_FONT_SIZE
+
 data_dir = os.path.join(PROJ_HOME, "TargetScan_dataset")
 
 def predict(model, 
@@ -91,7 +92,7 @@ def load_model(ckpt_name,
     ckpt_path = os.path.join(PROJ_HOME, 
                             "checkpoints", 
                             "TargetScan/TwoTowerTransformer",
-                            # "CNN-tokenized",
+                            "CNN-tokenized",
                             str(model.mrna_max_len), 
                             ckpt_name)
     loaded_data = torch.load(ckpt_path, map_location=model.device)
@@ -132,9 +133,9 @@ def viz_sequence(seq,
         above this Axes instead of making a new figure.
     figsize : tuple, only used if base_ax is None
     logo_height_frac : float
-        Fraction of the base Axes’ height to use for each logo.
+        Fraction of the base Axes' height to use for each logo.
     pad_frac : float
-        Fraction of the base Axes’ height to leave as vertical padding.
+        Fraction of the base Axes' height to leave as vertical padding.
     Returns
     -------
     fig : matplotlib.figure.Figure
@@ -214,11 +215,10 @@ def viz_sequence(seq,
         ax.set_ylim(0.0, 1.0)
         ax.set_xticks(range(len(seq)))
         ax.set_xticklabels(list(seq))
-        ax.tick_params(axis='x', labelsize=12)
-        ax.tick_params(axis='y', labelsize=12)
+        ax.tick_params(axis='both', labelsize=TICK_FONT_SIZE)
         # logo.ax.set_yscale('log')  # Log-transformed y-axis
         # logo.ax.set_ylim(1e-6, 1e-5)  # Example: 1e-5 to 0.1
-        ax.set_ylabel(ax_title)
+        ax.set_ylabel(ax_title, fontsize=AXIS_FONT_SIZE)
 
         # Add rectangle around specific bases (highlight_region is a tuple: (start, end))
         if seed_start is not None and seed_end is not None:
@@ -250,23 +250,23 @@ def main():
     # args_dict = vars(args)
 
     mirna_max_len   = 24
-    mrna_max_len    = 500
+    mrna_max_len    = 30
     predict_span    = True
     predict_binding = True
     device          = "cuda:3" 
     args_dict = {"mirna_max_len": mirna_max_len,
                  "mrna_max_len": mrna_max_len,
                  "device": device,
-                 "embed_dim": 512,
-                 "ff_dim": 1024,
+                 "embed_dim": 256,
+                 "ff_dim": 512,
                  "predict_span": predict_span,
                  "predict_binding": predict_binding,}
     print("Loading model ... ")
-    model = load_model(ckpt_name="best_composite_0.8839_0.9903_epoch40.pth",
+    model = load_model(ckpt_name="best_composite_0.9911_0.9977_epoch11.pth",
                        **args_dict)
     
     test_data_path = os.path.join(PROJ_HOME, data_dir, 
-                                 "TargetScan_train_500_randomized_start.csv")
+                                 "TargetScan_train_30_randomized_start.csv")
     test_data = pd.read_csv(test_data_path)
     mRNA_seqs = test_data[["mRNA sequence"]].values
     miRNA_seqs = test_data[["miRNA sequence"]].values
@@ -276,7 +276,7 @@ def main():
     os.makedirs(save_plot_dir, exist_ok=True)
 
     # Testing the first sequence
-    i=15
+    i=203041
     mRNA_seq = mRNA_seqs[i][0]
     miRNA_seq = miRNA_seqs[i][0]
     miRNA_id = test_data[["miRNA ID"]].iloc[i,0]
@@ -356,7 +356,7 @@ def main():
     
     # print("Max in delta = ", max(deltas))
     print("plot changes on base logos ...")
-    file_path = os.path.join(save_plot_dir, f"noCNN_{mRNA_id}_{miRNA_id}_attn_perturbed.png")
+    file_path = os.path.join(save_plot_dir, f"{mRNA_id}_{miRNA_id}_attn_perturbed.svg")
     fig, ax_viz = viz_sequence(seq=mRNA_seq, # visualize change on the original mRNA seq
                  attn_changes=attn_deltas,
                 #  emb_changes=emb_deltas,
@@ -364,7 +364,7 @@ def main():
                  seed_start=seed_start,
                  seed_end=seed_end,
                  base_ax=ax_attn,
-                 figsize=(35, 9),
+                 figsize=(12, 9),
                  file_name=file_path)
 
 if __name__ == '__main__':

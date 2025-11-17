@@ -1,9 +1,13 @@
 # checkpoints
 checkpoints/
+50k_checkpoints/
+best_checkpoints/
 
 # data
 data/
 TargetScan_dataset/
+miR_degradome_ago_clip_pairing_data/
+miRaw_data/
 
 # virtual env
 HyenaDNA/
@@ -30,5 +34,7 @@ wandb/
 #other
 build_dataset_output.txt
 dmiso_pairs.txt
+*run.pid
 *.out
 unused_data.tar.gz
+span_metrics.txt
