@@ -668,8 +668,9 @@ class QuestionAnsweringModel(nn.Module):
             valid_path="",
             test_path="",
             evaluation=False,
+            finetune=False,
             accumulation_step=1,
-            ckpt_name=""):
+            ckpt_path=""):
         tokenizer = CharacterTokenizer(characters=["A", "T", "C", "G", "N"],
                                        add_special_tokens=False, 
                                        model_max_length=self.mrna_max_len,
@@ -685,12 +686,6 @@ class QuestionAnsweringModel(nn.Module):
             test_loader = DataLoader(ds_test,
                                     batch_size=self.batch_size, 
                                     shuffle=False)
-            ckpt_path = os.path.join(PROJ_HOME, 
-                            "checkpoints", 
-                            "TargetScan/TwoTowerTransformer",
-                            "CNN-tokenized",
-                            str(30), 
-                            ckpt_name)
             loaded_data = torch.load(ckpt_path, map_location=model.device)
             current_state = model.state_dict()
             for key in list(loaded_data.keys()):
@@ -750,8 +745,8 @@ class QuestionAnsweringModel(nn.Module):
                     "epochs": self.epochs,
                     "learning rate": self.lr,
                 },
-                tags=["binding-span", "primates", "CNN-5-7-kernel"],
-                save_code=True,
+                tags=["binding-span", "primates", "CNN-5-7-kernel", "non-canonical", "finetune"],
+                save_code=False,
                 job_type="train"
             )
             self.seed_everything(seed=self.seed)
@@ -777,6 +772,25 @@ class QuestionAnsweringModel(nn.Module):
                                     batch_size=self.batch_size, 
                                     shuffle=False)
             loss_fn   = nn.CrossEntropyLoss()
+
+            if finetune:
+                loaded_data = torch.load(ckpt_path, map_location=self.device)
+                current_state = model.state_dict()
+                for key in list(loaded_data.keys()):
+                    if key not in current_state:
+                        continue
+                    if loaded_data[key].shape == current_state[key].shape:
+                        continue
+                    if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
+                        orig_shape = loaded_data[key].shape
+                        loaded_data[key] = current_state[key].clone()
+                        print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+                    else:
+                        print(f"Dropping mismatched key {key}: checkpoint {loaded_data[key].shape}, model {current_state[key].shape}")
+                        loaded_data.pop(key)
+                model.load_state_dict(loaded_data, strict=False)
+
+            print(f"Loaded checkpoint from {ckpt_path}")
             model.to(self.device)
             
             if self.predict_binding and not self.predict_span:
@@ -836,7 +850,7 @@ class QuestionAnsweringModel(nn.Module):
                         best_binding_acc      = acc_binding
                         best_f1_score         = f1
                         count = 0
-                        ckpt_name = f"alpha=1_best_composite_{f1:.4f}_{acc_binding:.4f}_epoch{epoch}.pth"
+                        ckpt_name = f"finetuned_best_composite_{f1:.4f}_{acc_binding:.4f}_epoch{epoch}.pth"
                         ckpt_path = os.path.join(model_checkpoints_dir, ckpt_name)
                         torch.save(model.state_dict(), ckpt_path)
                         model_art = wandb.Artifact(
@@ -915,7 +929,7 @@ if __name__ == "__main__":
     from Global_parameters import PROJ_HOME
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_train_40_non_canonical.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_validation_40_non_canonical.csv")
-    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_test_40_non_canonical.csv")
+    test_datapath  = os.path.join(PROJ_HOME, "Non_canonical_sites/mmu_mimosa_non_canonical_sites.csv")
 
     model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,
                                    mirna_max_len=mirna_max_len,
@@ -934,6 +948,7 @@ if __name__ == "__main__":
               train_path=train_datapath,
               valid_path=valid_datapath,
               test_path =test_datapath,
-              evaluation=False,
+              evaluation=True,
+              finetune=False,
               accumulation_step=1,
-              ckpt_name="best_composite_0.9911_0.9977_epoch11.pth")
+              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/30/best_composite_0.9911_0.9977_epoch11.pth"))

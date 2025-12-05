@@ -11,18 +11,12 @@ from Data_pipeline import CharacterTokenizer
 from Global_parameters import PROJ_HOME, AXIS_FONT_SIZE, TICK_FONT_SIZE, TITLE_FONT_SIZE
 
 def load_model(
-        ckpt_name,
+        ckpt_path,
         **args_dict):
     # load model checkpoint
     model = tm.QuestionAnsweringModel(**args_dict)
-    ckpt_path = os.path.join(PROJ_HOME, 
-                            "checkpoints", 
-                            "TargetScan/TwoTowerTransformer",
-                            "CNN-tokenized",
-                            str(model.mrna_max_len), 
-                            ckpt_name)
     loaded_data = torch.load(ckpt_path, map_location=model.device)
-    model.load_state_dict(loaded_data)
+    model.load_state_dict(loaded_data, strict=False)
     print(f"Loaded checkpoint from {ckpt_path}")
     return model
 
@@ -104,89 +98,157 @@ def plot_heatmap(model,
                  miRNA_id,
                  seed_start,
                  seed_end,
-                 figsize=(12,6),
+                 plot_max_only=False,
+                 figsize=(35, 12),
                  metrics=None,
                  file_name=None,
                  save_plot_dir=os.getcwd()):
     attn_weights = model.predictor.cross_attn_layer.last_attention
-    attn_weights = torch.amax(attn_weights[0], dim=0) # (mrna, mirna)
-    attn_weights = attn_weights.transpose(0,1) # (mirna, mrna)
+    if plot_max_only:
+        attn_weights = torch.amax(attn_weights[0], dim=0) # (mrna, mirna)
+        attn_weights = attn_weights.transpose(0,1) # (mirna, mrna)
+    
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
 
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
+        a, b = 0.02, attn_weights.max().item()
+        norm = colors.Normalize(vmin=a, vmax=b)
+        # plot attn weights for each head
+        # for h in range(attn_weights.shape[0]):
+        w = attn_weights.detach().cpu() #[mRNA len, miRNA len]
+        # 1) zero out anything below a
+        w = torch.where(w < a, torch.zeros_like(w), w)
+        # 2) clip anything above b
+        w = torch.where(w > b, torch.full_like(w, b), w)
+        im = sns.heatmap(w.numpy(), 
+                    ax=ax,
+                    cmap="Blues",#sns.color_palette('mako', as_cmap=True), 
+                    xticklabels=mRNA_seq,
+                    yticklabels=miRNA_seq,
+                    norm=norm,
+                    cbar=True)
+        
+        # get the Colorbar object
+        cbar = im.collections[0].colorbar
+        # set its tick‐label fontsize to 12
+        cbar.ax.tick_params(labelsize=9)
 
-    a, b = 0.1, attn_weights.max().item()
-    norm = colors.Normalize(vmin=a, vmax=b)
-    # plot attn weights for each head
-    # for h in range(attn_weights.shape[0]):
-    w = attn_weights.detach().cpu() #[mirna, mrna]
-    # 1) zero out anything below a
-    w = torch.where(w < a, torch.zeros_like(w), w)
-    # 2) clip anything above b
-    w = torch.where(w > b, torch.full_like(w, b), w)
-    im = sns.heatmap(w.numpy(), 
-            ax=ax,
-            cmap=sns.color_palette('mako', as_cmap=True), # "Blues"
-            xticklabels=mRNA_seq,
-            yticklabels=miRNA_seq,
-            norm=norm,
-            cbar=True
-    )
-
-    # get the Colorbar object
-    cbar = im.collections[0].colorbar
-    # set its tick‐label fontsize to 12
-    cbar.ax.tick_params(labelsize=12)
-
-    if seed_start != -1 and seed_end != -1:    
-        # seed_start and seed_end are indices into the mRNA sequence (0-based)
-        xs = seed_start
-        xe = seed_end
-        seed_len = xe - xs + 1
-            
-        # get where the seed starts and ends in miRNA
-        # skip [PAD] tokens
-        i = len(miRNA_seq) - 1
-        token = miRNA_seq[i]
-        while token == '[PAD]':
-            i -= 1
+        if seed_start != -1 and seed_end != -1:    
+            # seed_start and seed_end are indices into the mRNA sequence (0-based)
+            xs = seed_start
+            xe = seed_end
+            seed_len = xe - xs + 1
+                
+            # get where the seed starts and ends in miRNA
+            # skip [PAD] tokens
+            i = len(miRNA_seq) - 1
             token = miRNA_seq[i]
-        ys = i # seed ends at the 2nd last base
-        ys = ys - seed_len
+            while token == '[PAD]':
+                i -= 1
+                token = miRNA_seq[i]
+            ye = i # seed ends at the 2nd last base
+            ys = ye - seed_len
 
-        # draw a red rectangle around those rows
-        rect = patches.Rectangle(
-            (xs, ys),  # lower-left corner in data coords
-            seed_len,              # width = number of seed bases
-            seed_len,             # height = number of seed bases
-            linewidth=1,
-            edgecolor="orange",
-            facecolor="none"
+            # draw a red rectangle around those rows
+            rect = patches.Rectangle(
+                (xs, ys),  # lower-left corner in data coords
+                seed_len,              # width = number of seed bases
+                seed_len,             # height = number of seed bases
+                linewidth=0.4,
+                edgecolor="orange",
+                facecolor="none"
+            )
+            ax.add_patch(rect)
+
+        ax.set_xlabel(mRNA_id, fontsize=9)
+        ax.set_ylabel(miRNA_id, fontsize=9)
+        ax.tick_params(
+            axis='both',
+            labelsize=3,
+            which='both',
+            length=0,
+            width=0,
+            top=False,
+            right=False
         )
-        ax.add_patch(rect)
 
-    ax.set_xlabel(mRNA_id, fontsize=AXIS_FONT_SIZE)
-    ax.set_ylabel(miRNA_id, fontsize=AXIS_FONT_SIZE)
-    ax.tick_params(axis='both', labelsize=TICK_FONT_SIZE)
-    # ax.set_title(f"Head {h+1}", fontsize=TITLE_FONT_SIZE-1)
-        # fig.suptitle("miRNA-mRNA Cross-Attention Heatmap")
-    # if metrics is not None:
-    #     fig.text(0.5, 0.93, 
-    #             f"Binding probability = {metrics['binding_prob']:.3f}, F1 Score = {metrics['f1']}", 
-    #             fontsize=TITLE_FONT_SIZE, ha='center')
+    else: # plot each head
+        attn_weights = attn_weights[0]
+        attn_weights = attn_weights.transpose(1,2) # (H, mirna, mrna)
+        fig, axs = plt.subplots(nrows=attn_weights.shape[0], ncols=1, figsize=figsize)
+
+        a, b = 0.02, attn_weights.max().item()
+        norm = colors.Normalize(vmin=a, vmax=b)
+        # plot attn weights for each head
+        for h, ax in zip(range(attn_weights.shape[0]), axs):
+            w = attn_weights[h].detach().cpu() #[miRNA len, mRNA len]
+            # 1) zero out anything below a
+            w = torch.where(w < a, torch.zeros_like(w), w)
+            # 2) clip anything above b
+            w = torch.where(w > b, torch.full_like(w, b), w)
+            im = sns.heatmap(w.numpy(), 
+                        ax=ax,
+                        cmap="Blues",#sns.color_palette('mako', as_cmap=True), 
+                        xticklabels=mRNA_seq,
+                        yticklabels=miRNA_seq,
+                        norm=norm,
+                        cbar=True)
+            
+            # get the Colorbar object
+            cbar = im.collections[0].colorbar
+            # set its tick‐label fontsize to 12
+            cbar.ax.tick_params(labelsize=12)
+
+            if seed_start != -1 and seed_end != -1:    
+                # seed_start and seed_end are indices into the mRNA sequence (0-based)
+                xs = seed_start
+                xe = seed_end
+                seed_len = xe - xs + 1
+                    
+                # get where the seed starts and ends in miRNA
+                # skip [PAD] tokens
+                i = len(miRNA_seq) - 1
+                token = miRNA_seq[i]
+                while token == '[PAD]':
+                    i -= 1
+                    token = miRNA_seq[i]
+                ye = i # seed ends at the 2nd last base
+                ys = ye - seed_len
+
+                # draw a red rectangle around those rows
+                rect = patches.Rectangle(
+                    (xs, ys),  # lower-left corner in data coords
+                    seed_len,  # width = number of seed bases
+                    seed_len,   # height = number of seed bases
+                    linewidth=1,
+                    edgecolor="orange",
+                    facecolor="none"
+                )
+                ax.add_patch(rect)
+
+            ax.set_xlabel(mRNA_id, fontsize=15)
+            ax.set_ylabel(miRNA_id, fontsize=15)
+            ax.tick_params(axis='x', labelsize=12)
+            ax.tick_params(axis='y', labelsize=12)
+            ax.set_title(f"Head {h+1}", fontsize=15)
+    # fig.suptitle("miRNA-mRNA Cross-Attention Heatmap")
+    if metrics is not None:
+        fig.text(0.5, 0.93, 
+                f"(Binding probability = {metrics['binding_prob']:.3f}, Overlap = {metrics['f1']})", 
+                fontsize=20, ha='center')
     if file_name is not None:
         fig.savefig(file_name, dpi=500, bbox_inches='tight')
-    # else:
-    #     file_name = os.path.join(save_plot_dir, f"binding_span_{mRNA_id}_{miRNA_id}_heatmap_w_CNN_regenerated.svg")
-    #     fig.savefig(file_name, dpi=500, bbox_inches='tight')
-    #     print(f"Heatmap is saved to {file_name}")
+    else:
+        file_name = os.path.join(save_plot_dir, f"binding_span_{mRNA_id}_{miRNA_id}_heatmap_finetuned_best_composite_1.0000_1.0000_epoch10.svg")
+        fig.savefig(file_name, dpi=500, bbox_inches='tight')
+        print(f"Heatmap is saved to {file_name}")
     return fig, ax
 
 def main():
     mirna_max_len   = 24
-    mrna_max_len    = 30
+    mrna_max_len    = 40
     predict_span    = True
     predict_binding = True
-    device          = "cuda:3" 
+    device          = "cuda:2" 
     args_dict = {"mirna_max_len": mirna_max_len,
                  "mrna_max_len": mrna_max_len,
                  "device": device,
@@ -197,7 +259,7 @@ def main():
     
     data_dir = os.path.join(PROJ_HOME, 'TargetScan_dataset')
     test_datapath = os.path.join(PROJ_HOME, data_dir, 
-                                 "TargetScan_train_30_randomized_start.csv")
+                                 "TargetScan_train_40_non_canonical.csv")
     test_data  = pd.read_csv(test_datapath, sep=',')
     mRNA_seqs  = test_data[["mRNA sequence"]].values
     miRNA_seqs = test_data[["miRNA sequence"]].values
@@ -207,11 +269,12 @@ def main():
     seed_starts = test_data[["seed start"]].values
     seed_ends   = test_data[["seed end"]].values
     
-    model = load_model(ckpt_name="best_composite_0.9911_0.9977_epoch11.pth",
+    model = load_model(ckpt_path=os.path.join(PROJ_HOME, 
+                       "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/40/finetune_best_composite_1.0000_1.0000_epoch10.pth"),
                        **args_dict)
 
     # Testing the first sequence
-    i=299857 # row number - 2
+    i=11 # row number - 2
     mRNA_seq  = mRNA_seqs[i][0]
     miRNA_seq = miRNA_seqs[i][0]
     mRNA_ID   = mRNA_IDs[i][0]
@@ -256,12 +319,14 @@ def main():
     save_plot_dir = os.path.join(PROJ_HOME, "Performance/TargetScan_test", "TwoTowerTransformer", str(mrna_max_len))
     os.makedirs(save_plot_dir, exist_ok=True)
     plot_heatmap(model,
-                 miRNA_seq=miRNA_ids,
-                 mRNA_seq=mRNA_ids,
+                 miRNA_seq = miRNA_ids,
+                 mRNA_seq = mRNA_ids,
                  miRNA_id = miRNA_ID,
                  mRNA_id = mRNA_ID,
                  seed_start = seed_start,
                  seed_end = seed_end,
+                 plot_max_only=False,
+                 figsize=(12, 15),
                  metrics = {"binding_prob": binding_prob, "f1": f1},
                  save_plot_dir=save_plot_dir)
     
