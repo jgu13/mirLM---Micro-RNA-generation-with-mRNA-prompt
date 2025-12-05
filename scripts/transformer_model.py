@@ -689,43 +689,56 @@ class QuestionAnsweringModel(nn.Module):
                             "checkpoints", 
                             "TargetScan/TwoTowerTransformer",
                             "CNN-tokenized",
-                            str(model.mrna_max_len), 
+                            str(30), 
                             ckpt_name)
             loaded_data = torch.load(ckpt_path, map_location=model.device)
-            model.load_state_dict(loaded_data)
+            current_state = model.state_dict()
+            for key in list(loaded_data.keys()):
+                if key not in current_state:
+                    continue
+                if loaded_data[key].shape == current_state[key].shape:
+                    continue
+                if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
+                    orig_shape = loaded_data[key].shape
+                    loaded_data[key] = current_state[key].clone()
+                    print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+                else:
+                    print(f"Dropping mismatched key {key}: checkpoint {loaded_data[key].shape}, model {current_state[key].shape}")
+                    loaded_data.pop(key)
+            model.load_state_dict(loaded_data, strict=False)
             print(f"Loaded checkpoint from {ckpt_path}")
             model.to(self.device)
             self.eval_loop(model=model, 
                            dataloader=test_loader,
                            device=self.device,
                            evaluation=evaluation)
-            D_test_w_pred = D_test.copy()
-            if self.predict_binding:
-                D_test_w_pred["pred label"] = self.all_binding_preds
-                D_test_w_pred["pred prob"]  = self.all_binding_probs
-                res_df = D_test_w_pred
-            if self.predict_span:
-                D_test_positive = D_test_w_pred.loc[D_test_w_pred["label"] == 1].copy()
-                D_test_positive["pred start"] = self.all_start_preds
-                D_test_positive["pred end"]   = self.all_end_preds
-                # merge D_test_w_pred with D_test_positive
-                cols = ['pred start', 'pred end']
-                D_pred_se = D_test_positive[cols]
+            # D_test_w_pred = D_test.copy()
+            # if self.predict_binding:
+            #     D_test_w_pred["pred label"] = self.all_binding_preds
+            #     D_test_w_pred["pred prob"]  = self.all_binding_probs
+            #     res_df = D_test_w_pred
+            # if self.predict_span:
+            #     D_test_positive = D_test_w_pred.loc[D_test_w_pred["label"] == 1].copy()
+            #     D_test_positive["pred start"] = self.all_start_preds
+            #     D_test_positive["pred end"]   = self.all_end_preds
+            #     # merge D_test_w_pred with D_test_positive
+            #     cols = ['pred start', 'pred end']
+            #     D_pred_se = D_test_positive[cols]
 
-                # 2. 左连接（保留 D_test_w_pred 的所有行）
-                D_merged = D_test_w_pred.join(D_pred_se, how='left')
+            #     # 2. 左连接（保留 D_test_w_pred 的所有行）
+            #     D_merged = D_test_w_pred.join(D_pred_se, how='left')
 
-                # 3. 将缺失的 pred start/end 填成 -1，并转成整数
-                D_merged[['pred start', 'pred end']] = (
-                    D_merged[['pred start', 'pred end']]
-                    .fillna(-1)
-                    .astype(int)
-                )
-                res_df = D_merged
-            pred_df_path = os.path.join(os.path.join(PROJ_HOME, "Performance/TargetScan_test/TwoTowerTransformer"), str(mrna_max_len))
-            os.makedirs(pred_df_path, exist_ok=True)
-            res_df.to_csv(os.path.join(pred_df_path, "negative_with_seed_prediction.csv"), index=False)
-            print(f"Prediction saved to {pred_df_path}")
+            #     # 3. 将缺失的 pred start/end 填成 -1，并转成整数
+            #     D_merged[['pred start', 'pred end']] = (
+            #         D_merged[['pred start', 'pred end']]
+            #         .fillna(-1)
+            #         .astype(int)
+            #     )
+            #     res_df = D_merged
+            # pred_df_path = os.path.join(os.path.join(PROJ_HOME, "Performance/TargetScan_test/TwoTowerTransformer"), str(mrna_max_len))
+            # os.makedirs(pred_df_path, exist_ok=True)
+            # res_df.to_csv(os.path.join(pred_df_path, "negative_with_seed_prediction.csv"), index=False)
+            # print(f"Prediction saved to {pred_df_path}")
         else:
             # weights and bias initialization
             wandb.login(key="600e5cca820a9fbb7580d052801b3acfd5c92da2")
@@ -897,17 +910,17 @@ class QuestionAnsweringModel(nn.Module):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 30
+    mrna_max_len = 40
     mirna_max_len = 24
-    PROJ_HOME = os.path.expanduser("~/projects/mirLM")
-    train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_train_30_randomized_start.csv")
-    valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_validation_30_randomized_start.csv")
-    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/negative_samples_30_with_seed.csv")
+    from Global_parameters import PROJ_HOME
+    train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_train_40_non_canonical.csv")
+    valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_validation_40_non_canonical.csv")
+    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_test_40_non_canonical.csv")
 
     model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,
                                    mirna_max_len=mirna_max_len,
                                    device='cuda:2',
-                                   epochs=20,
+                                   epochs=15,
                                    embed_dim=256,
                                    ff_dim=512,
                                    batch_size=32,
@@ -922,5 +935,5 @@ if __name__ == "__main__":
               valid_path=valid_datapath,
               test_path =test_datapath,
               evaluation=False,
-              accumulation_step=8,
+              accumulation_step=1,
               ckpt_name="best_composite_0.9911_0.9977_epoch11.pth")
