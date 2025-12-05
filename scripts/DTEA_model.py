@@ -9,13 +9,13 @@ from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 import os
 import sys
 import math
-# import wandb # uncomment to use wandb
+import wandb # uncomment to use wandb
 import random
 import numpy as np
 import pandas as pd
 from time import time
 from itertools import chain
-# from wandb.sdk.wandb_settings import Settings # uncomment to use wandb
+from wandb.sdk.wandb_settings import Settings # uncomment to use wandb
 
 from utils import load_dataset
 from ckpt_util import load_training_state, save_training_state
@@ -1819,7 +1819,7 @@ class DTEA(nn.Module):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 520
+    mrna_max_len =40
     mirna_max_len = 24
     train_datapath = os.path.join(PROJ_HOME, "miR_degradome_ago_clip_pairing_data/starbase_degradome_UTR_windows_500_train.csv")
     valid_datapath = os.path.join(PROJ_HOME, "miR_degradome_ago_clip_pairing_data/starbase_degradome_UTR_windows_500_validation.csv")

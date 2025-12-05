@@ -21,6 +21,7 @@ optuna_logs/
 
 # database
 optuna_database/
+Non_canonical_sites/
 
 #cache
 scripts/__pycache__/
