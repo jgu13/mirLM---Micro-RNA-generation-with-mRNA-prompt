@@ -653,7 +653,52 @@ class QuestionAnsweringModel(nn.Module):
                 self.all_start_preds = all_start_preds.numpy()
                 self.all_end_preds = all_end_preds.numpy()
 
-        return avg_loss, acc_binding, acc_start, acc_end, exact_match, f1      
+        return avg_loss, acc_binding, acc_start, acc_end, exact_match, f1    
+
+    def predict(self, 
+                model, 
+                dataloader,
+                device):
+        model.eval()
+        all_binding_probs, all_start_preds, all_end_preds = [], [], []
+
+        with torch.no_grad():
+            for batch in dataloader:
+                for k in batch:
+                    batch[k] = batch[k].to(device)
+                mrna_mask  = batch["mrna_attention_mask"]
+                mirna_mask = batch["mirna_attention_mask"]
+                outputs    = model(
+                    mirna=batch["mirna_input_ids"],
+                    mrna=batch["mrna_input_ids"],
+                    mirna_mask=mirna_mask,
+                    mrna_mask=mrna_mask,
+                )
+                binding_logits, start_logits, end_logits = outputs
+                if self.predict_binding:
+                    binding_probs = F.sigmoid(binding_logits)
+                    binding_probs = binding_probs.detach().cpu()
+                    all_binding_probs.extend(binding_probs)
+                if self.predict_span:
+                    start_logits = start_logits.masked_fill(mrna_mask==0, float("-inf"))
+                    end_logits   = end_logits.masked_fill(mrna_mask==0, float("-inf"))
+                    # predictions
+                    start_preds = torch.argmax(start_logits, dim=-1) #(batch_size, )
+                    end_preds   = torch.argmax(end_logits, dim=-1) #(batch_size, )
+                    start_preds = start_preds.detach().cpu()
+                    end_preds = end_preds.detach().cpu()
+                    all_start_preds.extend(start_preds)
+                    all_end_preds.extend(end_preds)
+
+        all_binding_probs = torch.stack(all_binding_probs)
+        all_start_preds = torch.stack(all_start_preds)
+        all_end_preds = torch.stack(all_end_preds)
+        print(all_binding_probs.shape, all_start_preds.shape, all_end_preds.shape)
+        # all_binding_probs = np.concatenate(all_binding_probs, axis=0).numpy()
+        # all_start_preds = np.concatenate(all_start_preds, axis=0).numpy()
+        # all_end_preds = np.concatenate(all_end_preds, axis=0).numpy()
+        
+        return all_binding_probs, all_start_preds, all_end_preds
 
     @staticmethod 
     def seed_everything(seed):
@@ -668,14 +713,52 @@ class QuestionAnsweringModel(nn.Module):
             valid_path="",
             test_path="",
             evaluation=False,
+            predict=False,
             finetune=False,
             accumulation_step=1,
-            ckpt_path=""):
+            ckpt_path="",
+            ):
         tokenizer = CharacterTokenizer(characters=["A", "T", "C", "G", "N"],
                                        add_special_tokens=False, 
                                        model_max_length=self.mrna_max_len,
                                        padding_side="right")
-        if evaluation:
+        if predict:
+            D_test = load_dataset(test_path, sep=',')
+            ds_test = QuestionAnswerDataset(data=D_test,
+                                mrna_max_len=self.mrna_max_len,
+                                mirna_max_len=self.mirna_max_len,
+                                tokenizer=tokenizer,
+                                seed_start_col="seed start",
+                                seed_end_col="seed end",)
+            test_loader = DataLoader(ds_test,
+                                    batch_size=self.batch_size, 
+                                    shuffle=False)
+            loaded_data = torch.load(ckpt_path, map_location=model.device)
+            current_state = model.state_dict()
+            for key in list(loaded_data.keys()):
+                if key not in current_state:
+                    continue
+                if loaded_data[key].shape == current_state[key].shape:
+                    continue
+                if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
+                    orig_shape = loaded_data[key].shape
+                    loaded_data[key] = current_state[key].clone()
+                    print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+                else:
+                    print(f"Dropping mismatched key {key}: checkpoint {loaded_data[key].shape}, model {current_state[key].shape}")
+                    loaded_data.pop(key)
+            model.load_state_dict(loaded_data, strict=False)
+            print(f"Loaded checkpoint from {ckpt_path}")
+            model.to(self.device)
+            all_binding_probs, all_start_preds, all_end_preds = self.predict(model=model,
+                                                            dataloader=test_loader,
+                                                            device=self.device)
+            D_test["binding_probs"] = all_binding_probs
+            D_test["start_preds"] = all_start_preds
+            D_test["end_preds"] = all_end_preds
+            D_test.to_csv(os.path.join(os.path.dirname(test_path), "zero_shot_prediction_best_composite_1.0000_1.0000_epoch10.csv"), index=False)
+            print(f"Zero shot prediction saved to {os.path.join(os.path.dirname(test_path), 'zero_shot_prediction_best_composite_1.0000_1.0000_epoch10.csv')}")
+        elif evaluation:
             D_test = load_dataset(test_path, sep=',')
             ds_test = QuestionAnswerDataset(data=D_test,
                                 mrna_max_len=self.mrna_max_len,
@@ -707,33 +790,33 @@ class QuestionAnsweringModel(nn.Module):
                            dataloader=test_loader,
                            device=self.device,
                            evaluation=evaluation)
-            # D_test_w_pred = D_test.copy()
-            # if self.predict_binding:
-            #     D_test_w_pred["pred label"] = self.all_binding_preds
-            #     D_test_w_pred["pred prob"]  = self.all_binding_probs
-            #     res_df = D_test_w_pred
-            # if self.predict_span:
-            #     D_test_positive = D_test_w_pred.loc[D_test_w_pred["label"] == 1].copy()
-            #     D_test_positive["pred start"] = self.all_start_preds
-            #     D_test_positive["pred end"]   = self.all_end_preds
-            #     # merge D_test_w_pred with D_test_positive
-            #     cols = ['pred start', 'pred end']
-            #     D_pred_se = D_test_positive[cols]
+            D_test_w_pred = D_test.copy()
+            if self.predict_binding:
+                D_test_w_pred["pred label"] = self.all_binding_preds
+                D_test_w_pred["pred prob"]  = self.all_binding_probs
+                res_df = D_test_w_pred
+            if self.predict_span:
+                D_test_positive = D_test_w_pred.loc[D_test_w_pred["label"] == 1].copy()
+                D_test_positive["pred start"] = self.all_start_preds
+                D_test_positive["pred end"]   = self.all_end_preds
+                # merge D_test_w_pred with D_test_positive
+                cols = ['pred start', 'pred end']
+                D_pred_se = D_test_positive[cols]
 
-            #     # 2. 左连接（保留 D_test_w_pred 的所有行）
-            #     D_merged = D_test_w_pred.join(D_pred_se, how='left')
+                # 2. 左连接（保留 D_test_w_pred 的所有行）
+                D_merged = D_test_w_pred.join(D_pred_se, how='left')
 
-            #     # 3. 将缺失的 pred start/end 填成 -1，并转成整数
-            #     D_merged[['pred start', 'pred end']] = (
-            #         D_merged[['pred start', 'pred end']]
-            #         .fillna(-1)
-            #         .astype(int)
-            #     )
-            #     res_df = D_merged
-            # pred_df_path = os.path.join(os.path.join(PROJ_HOME, "Performance/TargetScan_test/TwoTowerTransformer"), str(mrna_max_len))
-            # os.makedirs(pred_df_path, exist_ok=True)
-            # res_df.to_csv(os.path.join(pred_df_path, "negative_with_seed_prediction.csv"), index=False)
-            # print(f"Prediction saved to {pred_df_path}")
+                # 3. 将缺失的 pred start/end 填成 -1，并转成整数
+                D_merged[['pred start', 'pred end']] = (
+                    D_merged[['pred start', 'pred end']]
+                    .fillna(-1)
+                    .astype(int)
+                )
+                res_df = D_merged
+            pred_df_path = os.path.join(os.path.join(PROJ_HOME, "Performance/TargetScan_test/TwoTowerTransformer"), str(mrna_max_len))
+            os.makedirs(pred_df_path, exist_ok=True)
+            res_df.to_csv(os.path.join(pred_df_path, "negative_with_seed_prediction.csv"), index=False)
+            print(f"Prediction saved to {pred_df_path}")
         else:
             # weights and bias initialization
             wandb.login(key="600e5cca820a9fbb7580d052801b3acfd5c92da2")
@@ -924,12 +1007,12 @@ class QuestionAnsweringModel(nn.Module):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 40
+    mrna_max_len = 50
     mirna_max_len = 24
     from Global_parameters import PROJ_HOME
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_train_40_non_canonical.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_validation_40_non_canonical.csv")
-    test_datapath  = os.path.join(PROJ_HOME, "Non_canonical_sites/mmu_mimosa_non_canonical_sites.csv")
+    test_datapath  = os.path.join(PROJ_HOME, "Mimosa_dataset/mmu_mimosa_non_canonical_sites.csv")
 
     model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,
                                    mirna_max_len=mirna_max_len,
@@ -948,7 +1031,8 @@ if __name__ == "__main__":
               train_path=train_datapath,
               valid_path=valid_datapath,
               test_path =test_datapath,
-              evaluation=True,
+              evaluation=False,
+              predict=True,
               finetune=False,
               accumulation_step=1,
-              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/30/best_composite_0.9911_0.9977_epoch11.pth"))
+              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/40/finetune_non_canonical_best_composite_1.0000_1.0000_epoch10.pth"))
