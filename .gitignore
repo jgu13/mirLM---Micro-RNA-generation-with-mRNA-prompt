@@ -22,6 +22,7 @@ optuna_logs/
 # database
 optuna_database/
 Non_canonical_sites/
+Mimosa_dataset/
 
 #cache
 scripts/__pycache__/
