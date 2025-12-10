@@ -21,6 +21,7 @@ optuna_logs/
 
 # database
 optuna_database/
+Mimosa_dataset/
 
 #cache
 scripts/__pycache__/
