@@ -16,6 +16,19 @@ def load_model(
     # load model checkpoint
     model = tm.QuestionAnsweringModel(**args_dict)
     loaded_data = torch.load(ckpt_path, map_location=model.device)
+    current_state = model.state_dict()
+    for key in list(loaded_data.keys()):
+        if key not in current_state:
+            continue
+        if loaded_data[key].shape == current_state[key].shape:
+            continue
+        if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
+            orig_shape = loaded_data[key].shape
+            loaded_data[key] = current_state[key].clone()
+            print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+        else:
+            print(f"Dropping mismatched key {key}: checkpoint {loaded_data[key].shape}, model {current_state[key].shape}")
+            loaded_data.pop(key)
     model.load_state_dict(loaded_data, strict=False)
     print(f"Loaded checkpoint from {ckpt_path}")
     return model
@@ -220,7 +233,7 @@ def plot_heatmap(model,
                     seed_len,  # width = number of seed bases
                     seed_len,   # height = number of seed bases
                     linewidth=1,
-                    edgecolor="orange",
+                    edgecolor="magenta",
                     facecolor="none"
                 )
                 ax.add_patch(rect)
@@ -238,14 +251,14 @@ def plot_heatmap(model,
     if file_name is not None:
         fig.savefig(file_name, dpi=500, bbox_inches='tight')
     else:
-        file_name = os.path.join(save_plot_dir, f"binding_span_{mRNA_id}_{miRNA_id}_heatmap_finetuned_best_composite_1.0000_1.0000_epoch10.svg")
+        file_name = os.path.join(save_plot_dir, f"binding_span_{mRNA_id}_{miRNA_id}_heatmap_mimosa_zero_shot_best_composite_1.0000_1.0000_epoch10.svg")
         fig.savefig(file_name, dpi=500, bbox_inches='tight')
         print(f"Heatmap is saved to {file_name}")
     return fig, ax
 
 def main():
     mirna_max_len   = 24
-    mrna_max_len    = 40
+    mrna_max_len    = 50
     predict_span    = True
     predict_binding = True
     device          = "cuda:2" 
@@ -257,24 +270,24 @@ def main():
                  "predict_span": predict_span,
                  "predict_binding": predict_binding,}
     
-    data_dir = os.path.join(PROJ_HOME, 'TargetScan_dataset')
+    data_dir = os.path.join(PROJ_HOME, 'Mimosa_dataset')
     test_datapath = os.path.join(PROJ_HOME, data_dir, 
-                                 "TargetScan_train_40_non_canonical.csv")
+                                 "mmu_mimosa_non_canonical_sites.csv")
     test_data  = pd.read_csv(test_datapath, sep=',')
     mRNA_seqs  = test_data[["mRNA sequence"]].values
     miRNA_seqs = test_data[["miRNA sequence"]].values
     miRNA_IDs   = test_data[["miRNA ID"]].values
-    mRNA_IDs    = test_data[["Transcript ID"]].values
+    mRNA_IDs    = test_data[["Target Gene"]].values
     labels      = test_data[["label"]].values
     seed_starts = test_data[["seed start"]].values
     seed_ends   = test_data[["seed end"]].values
     
     model = load_model(ckpt_path=os.path.join(PROJ_HOME, 
-                       "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/40/finetune_best_composite_1.0000_1.0000_epoch10.pth"),
+                       "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/40/finetune_non_canonical_best_composite_1.0000_1.0000_epoch10.pth"),
                        **args_dict)
 
     # Testing the first sequence
-    i=11 # row number - 2
+    i=8 # row number - 2
     mRNA_seq  = mRNA_seqs[i][0]
     miRNA_seq = miRNA_seqs[i][0]
     mRNA_ID   = mRNA_IDs[i][0]
