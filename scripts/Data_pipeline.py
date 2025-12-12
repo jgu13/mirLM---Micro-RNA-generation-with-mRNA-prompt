@@ -392,10 +392,7 @@ class QuestionAnswerDataset(torch.utils.data.Dataset):
             max_length=self.mrna_max_len,  
             return_attention_mask=True,
         )
-
-        # add CNN-encoded k-mer tokenization
-        
-
+    
         mirna_ids = torch.tensor(mirna_encoded["input_ids"], dtype=torch.long)
         mirna_attn_mask = torch.tensor(mirna_encoded["attention_mask"], dtype=torch.long)
         mrna_ids = torch.tensor(mrna_encoded["input_ids"], dtype=torch.long)
@@ -412,5 +409,59 @@ class QuestionAnswerDataset(torch.utils.data.Dataset):
             "target": target
         }
       
+class TargetPredictionDataset(torch.utils.data.Dataset):
+    def __init__(self,
+                 data,
+                 mrna_max_len,
+                 mirna_max_len,
+                 tokenizer,
+                 mRNA_col="mRNA sequence",
+                 miRNA_col="miRNA sequence",):
+        self.data = data
+        self.mrna_max_len = mrna_max_len
+        self.mirna_max_len = mirna_max_len
+        self.tokenizer = tokenizer
+        self.mRNA_col = mRNA_col
+        self.miRNA_col = miRNA_col
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        mrna_seq = self.data[self.mRNA_col].iat[idx]
+        mirna_seq = self.data[self.miRNA_col].iat[idx]
+
+        # Tokenize mirna
+        mirna_seq = mirna_seq.replace("U", "T")
+        mirna_seq = mirna_seq[::-1]
+        mirna_encoded = self.tokenizer(
+            mirna_seq,
+            add_special_tokens=False,
+            padding="max_length",
+            truncation=True,
+            max_length=self.mirna_max_len, 
+            return_attention_mask=True,
+        )
+
+        # Tokenize mrna
+        mrna_encoded = self.tokenizer(
+            mrna_seq,
+            add_special_tokens=False,
+            padding="max_length",
+            truncation=True,
+            max_length=self.mrna_max_len,  
+            return_attention_mask=True,
+        )
+    
+        mirna_ids = torch.tensor(mirna_encoded["input_ids"], dtype=torch.long)
+        mrna_ids = torch.tensor(mrna_encoded["input_ids"], dtype=torch.long)
+
+        # add a bos (BOS) token at the beginning of the sequence
+        box_token_id = self.tokenizer.convert_tokens_to_ids("[BOS]")
+        mirna_ids = torch.cat([torch.tensor([box_token_id], dtype=torch.long), mirna_ids], dim=0)
+        mrna_ids = torch.cat([torch.tensor([box_token_id], dtype=torch.long), mrna_ids], dim=0)
         
-        
+        return {
+            "mirna_input_ids": mirna_ids,
+            "mrna_input_ids": mrna_ids
+        }

@@ -13,7 +13,7 @@ import pandas as pd
 from time import time
 
 from utils import load_dataset
-from Data_pipeline import CharacterTokenizer, QuestionAnswerDataset
+from Data_pipeline import CharacterTokenizer, QuestionAnswerDataset, TargetPredictionDataset
 
 
 class CNNTokenization(nn.Module):
@@ -76,7 +76,7 @@ class MultiHeadAttention(nn.Module):
                  num_heads,
                  device='cuda',
                  max_seq_len=10000,
-                 cross_attn=False):
+                 cross_attn=False,):
         super(MultiHeadAttention, self).__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -126,7 +126,10 @@ class MultiHeadAttention(nn.Module):
         # Scaled Dot-Product Attention
         scores = torch.matmul(Q, K.transpose(2, 3)) * self.scale # (batchsize, num_head, q_len, k_len)
         if mask is not None:
-            mask = mask.unsqueeze(1).unsqueeze(2).expand(-1, self.num_heads, Q.shape[2], -1) # (batchsize, head_dim, q_len, k_len)
+            if mask.dim() == 2:
+                mask = mask.unsqueeze(1).unsqueeze(2).expand(-1, self.num_heads, Q.shape[2], -1) # (batchsize, head_dim, q_len, k_len)
+            elif mask.dim() == 3:
+                mask = mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
             mask = mask.to(self.device)
             scores = scores.masked_fill(mask==0, float("-inf"))
         attention = F.softmax(scores, dim=-1)
@@ -212,6 +215,55 @@ class TransformerEncoder(nn.Module):
             x = layer(x, mask)
         return x
 
+class TransformerDecoderLayer(nn.Module):
+    def __init__(self, embed_dim, num_heads, ff_dim, max_seq_len=10000, dropout=0.1, device='cuda', tgt_mask=None):
+        super(TransformerDecoderLayer, self).__init__()
+        self.self_attn = MultiHeadAttention(embed_dim=embed_dim, 
+                                            num_heads=num_heads, 
+                                            device=device,
+                                            max_seq_len=max_seq_len,
+                                            cross_attn=False,)
+        self.cross_attn = MultiHeadAttention(embed_dim=embed_dim, 
+                                             num_heads=num_heads, 
+                                             device=device,
+                                             cross_attn=True,
+                                             max_seq_len=max_seq_len,)
+        self.feed_forward = FeedForward(embed_dim, ff_dim)
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.norm3 = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, memory, src_mask=None, tgt_mask=None):
+        x = self.self_attn(x, x, x, mask=tgt_mask)
+        x = self.norm1(x + self.dropout(x))
+        x = self.cross_attn(x, memory, memory, mask=src_mask)
+        x = self.norm2(x + self.dropout(x))
+        x = self.feed_forward(x)
+        x = self.norm3(x + self.dropout(x))
+        return x
+
+class TransformerDecoder(nn.Module):
+    def __init__(self, num_layers, embed_dim, num_heads, ff_dim, max_seq_len=10000, dropout=0.1, device='cuda'):
+        super(TransformerDecoder, self).__init__()
+        self.layers = nn.ModuleList(
+            [TransformerDecoderLayer(embed_dim=embed_dim, 
+                                     num_heads=num_heads, 
+                                     ff_dim=ff_dim, 
+                                     max_seq_len=max_seq_len,
+                                     dropout=dropout, 
+                                     device=device) for _ in range(num_layers)]
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, memory, src_mask=None, tgt_mask=None):
+        for layer in self.layers:
+            x = layer(x, memory, src_mask, tgt_mask)
+        x = self.norm(x)
+        x = self.dropout(x)
+        return x
+
 class LinearHead(nn.Module):
     def __init__(self,
                  input_size, 
@@ -253,11 +305,9 @@ class CrossAttentionPredictor(nn.Module):
         self.embed_dim = embed_dim
         self.dropout_rate = dropout_rate
         self.device = device
-        # self.embedding = nn.Embedding(vocab_size, embed_dim)
         self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
         self.cnn_embedding = CNNTokenization(embed_dim)
-        # self.mirna_positional_embedding = AdditivePositionalEncoding(max_len=mirna_max_len, d_model=embed_dim)
-        # self.mrna_positional_embedding = AdditivePositionalEncoding(max_len=mrna_max_len, d_model=embed_dim)
+
         self.mirna_encoder = TransformerEncoder(
             num_layers=num_layers,
             embed_dim=embed_dim,
@@ -483,7 +533,7 @@ class QuestionAnsweringModel(nn.Module):
                 span_loss  = 0.5 * (loss_start + loss_end)
                 loss       = span_loss 
 
-            loss = loss / accumulation_step
+            loss = loss / accumulation_step # why do we divide by accumulation_step here?
             loss.backward()
             bs = batch["mrna_input_ids"].size(0)
             if accumulation_step != 1:
@@ -1005,34 +1055,466 @@ class QuestionAnsweringModel(nn.Module):
             run.summary["best_epoch"]       = int(model_art.metadata["epoch"])
             run.finish()
 
+class TargetGenerationModel(nn.Module):
+    def __init__(self,
+                 batch_size:int,
+                 lr:float,
+                 mirna_max_len:int,
+                 mrna_max_len:int, 
+                 vocab_size:int=12, # 7 special tokens + 5 bases
+                 num_layers:int=2, 
+                 embed_dim:int=256, 
+                 num_heads:int=2, 
+                 ff_dim:int=512,
+                 hidden_sizes:list[int]=[512, 512],
+                 n_classes:int=12, 
+                 dropout_rate:float=0.1,
+                 device:str='cuda',
+                 predict_span=True,
+                 predict_binding=False,
+                 pad_idx=4,
+                 seed:int=42):
+        super(TargetGenerationModel, self).__init__()
+        self.embed_dim = embed_dim
+        self.dropout_rate = dropout_rate
+        self.device = device
+        self.pad_idx = pad_idx
+        self.batch_size = batch_size
+        self.lr = lr
+        self.seed = seed
+        self.ff_dim = ff_dim
+        self.mrna_max_len = mrna_max_len
+        self.mirna_max_len = mirna_max_len
+        self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.cnn_embedding = CNNTokenization(embed_dim=embed_dim)
+        self.mrna_encoder = TransformerEncoder(
+            num_layers=num_layers, 
+            embed_dim=embed_dim, 
+            num_heads=num_heads, 
+            ff_dim=ff_dim, 
+            max_seq_len=mrna_max_len, 
+            dropout=dropout_rate, 
+            device=device)
+        self.mirna_decoder = TransformerDecoder(
+            num_layers=num_layers, 
+            embed_dim=embed_dim, 
+            num_heads=num_heads, 
+            ff_dim=ff_dim, 
+            max_seq_len=mirna_max_len, 
+            dropout=dropout_rate, 
+            device=device)
+        self.predictor_head = LinearHead(
+            input_size=embed_dim, 
+            hidden_sizes=hidden_sizes,
+            output_size=n_classes,
+            dropout=dropout_rate)
+
+    def forward(self,
+                mirna,
+                mrna,
+                mrna_mask,
+                mirna_mask,):
+        mrna_sn_embedding = self.sn_embedding(mrna)
+        mirna_sn_embedding = self.sn_embedding(mirna)
+        mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2))
+        mirna_embedding = mirna_sn_embedding + mirna_cnn_embedding
+        # mirna_embedding = self.mirna_encoder(mirna_embedding, mask=mirna_mask)
+
+        mrna_cnn_embedding = self.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))
+        mrna_embedding = mrna_sn_embedding + mrna_cnn_embedding
+        mrna_embedding = self.mrna_encoder(mrna_embedding, mask=mrna_mask)
+
+        mirna_embedding = self.mirna_decoder(x=mirna_embedding, memory=mrna_embedding, src_mask=mrna_mask, tgt_mask=mirna_mask)
+        next_token_logits = self.predictor_head(mirna_embedding)
+        return next_token_logits
+
+    @staticmethod
+    def generate_square_subsequent_mask(L, device=None):
+        # shape: (1, L, L) with 1 on lower triangle
+        mask = torch.tril(torch.ones(L, L, dtype=torch.uint8))
+        mask = mask.unsqueeze(0)
+        if device is not None:
+            mask = mask.to(device)
+        return mask
+
+    def create_src_mask(self, src_tokens):
+        """
+        src_tokens: (B, L_src)
+        Returns mask of shape (B, L_src, L_src) with 1 for valid, 0 for pad.
+        Here we only mask out padded positions as keys.
+        """
+        B, L_src = src_tokens.size()
+        # src_key_padding_mask: (B, L_src) -> 1 if non-pad, 0 if pad
+        non_pad = (src_tokens != self.pad_idx).to(torch.uint8)
+        # Broadcast to (B, L_src, L_src): query positions always allowed,
+        # key positions masked if pad.
+        src_mask = non_pad.unsqueeze(1)
+        return src_mask  # uint8 1/0
+
+    def create_tgt_mask(self, tgt_input):
+        """
+        tgt_input: (B, L_tgt)
+        Combines:
+        - causal mask (no attending to future)
+        - padding mask (PAD tokens shouldn't be attended to)
+        Returns (B, L_tgt, L_tgt)
+        """
+        B, L_tgt = tgt_input.size()
+
+        # causal: (1, L_tgt, L_tgt)
+        causal = self.generate_square_subsequent_mask(L_tgt, device=tgt_input.device)
+
+        # padding: (B, L_tgt, 1) broadcast to (B, L_tgt, L_tgt)
+        non_pad = (tgt_input != self.pad_idx).to(torch.uint8)  # (B, L_tgt)
+        non_pad = non_pad.unsqueeze(1)                    # (B, 1, L_tgt)
+        non_pad = non_pad.repeat(1, L_tgt, 1)             # (B, L_tgt, L_tgt)
+
+        # combine: valid if both not masked by causal and not PAD
+        # causal: (1, L, L) -> (B, L, L) by broadcasting
+        tgt_mask = causal & non_pad  # uint8 AND
+        return tgt_mask
+
+    def train_loop(self,
+                   model,
+                   dataloader,
+                   loss_fn,
+                   optimizer,
+                   device,
+                   epoch,
+                   accumulation_step=1,):
+        model.train()
+        total_loss = 0
+        loss_list = []
+        for batch_idx, batch in enumerate(dataloader):
+            mirna_input = batch["mirna_input_ids"].to(device)
+            mrna_input = batch["mrna_input_ids"].to(device)
+            # 1) Build decoder inputs/outputs by shifting
+            # tgt_input: all but last token
+            # tgt_output: all but first token
+            tgt_input = mirna_input[:, :-1] # (B, L_mirna-1)
+            tgt_output = mirna_input[:, 1:] # (B, L_mirna-1)
+            src_input = mrna_input # (B, L_mrna)
+
+            # 2) Masks
+            src_mask = self.create_src_mask(mrna_input)    # (B, L_mrna, L_mrna)
+            tgt_mask = self.create_tgt_mask(tgt_input)     # (B, L_mirna-1, L_mirna-1)
+            src_mask = src_mask.to(device)
+            tgt_mask = tgt_mask.to(device)
+
+            logits = self.forward(mirna=tgt_input, mrna=src_input, mrna_mask=src_mask, mirna_mask=tgt_mask)  # (B, L_mirna-1, n_classes)
+            B, L, V = logits.size()
+            loss = loss_fn(
+                logits.view(B*L, V), 
+                tgt_output.reshape(B*L,)) # (B*L, )
+
+            loss = loss / accumulation_step # why do we divide by accumulation_step here?
+            loss.backward()
+            bs = batch["mrna_input_ids"].size(0)
+            if accumulation_step != 1:
+                loss_list.append(loss.item())
+                if (batch_idx + 1) % accumulation_step == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    print(
+                        f"Train Epoch: {epoch} "
+                        f"[{(batch_idx + 1) * bs}/{len(dataloader.dataset)} "
+                        f"({(batch_idx + 1) * bs / len(dataloader.dataset) * 100:.0f}%)] "
+                        f"Avg loss: {sum(loss_list) / len(loss_list):.6f}\n",
+                        flush=True
+                    )
+                    loss_list = []
+            else:
+                optimizer.step()
+                optimizer.zero_grad()
+                print(
+                    f"Train Epoch: {epoch} "
+                    f"[{(batch_idx + 1) * bs}/{len(dataloader.dataset)} "
+                    f"({(batch_idx + 1) * bs / len(dataloader.dataset) * 100:.0f}%)] "
+                    f"Loss: {loss.item():.6f}\n",
+                    flush=True
+                ) 
+
+            total_loss += loss.item() * accumulation_step
+        # After the loop, if gradients remain (for non-divisible number of batches)
+        if (batch_idx + 1) % accumulation_step != 0:
+            optimizer.step()
+            optimizer.zero_grad()
+        avg_loss = total_loss / len(dataloader)
+        return avg_loss
+
+    def eval_loop(self,
+                  model,
+                  dataloader,
+                  device,
+                  epoch,
+                  loss_fn,):
+        model.eval()
+        total_loss = 0
+        total_correct_tokens = 0
+        total_tokens = 0
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(dataloader):
+                mirna_input = batch["mirna_input_ids"].to(device)
+                mrna_input = batch["mrna_input_ids"].to(device)
+                # 1) Build decoder inputs/outputs by shifting
+                # tgt_input: all but last token
+                # tgt_output: all but first token
+                tgt_input = mirna_input[:, :-1] # (B, L_mirna-1)
+                tgt_output = mirna_input[:, 1:] # (B, L_mirna-1)
+                src_input = mrna_input # (B, L_mrna)
+
+                # 2) Masks
+                src_mask = self.create_src_mask(src_input)    # (B, L_mrna, L_mrna)
+                tgt_mask = self.create_tgt_mask(tgt_input)     # (B, L_mirna-1, L_mirna-1)
+                src_mask = src_mask.to(device)
+                tgt_mask = tgt_mask.to(device)
+
+                # 3) Forward pass
+                logits = model(mirna=tgt_input, mrna=src_input, mrna_mask=src_mask, mirna_mask=tgt_mask)  # (B, L_mirna-1, n_classes)
+                B, L, V = logits.size()
+                total_tokens += B * L
+                loss = loss_fn(
+                    logits.view(B*L, V), 
+                    tgt_output.reshape(B*L,)) # (B*L, )
+                total_loss += loss.item()
+                total_correct_tokens += (logits.argmax(dim=-1) == tgt_output).sum().item() # check the correctness of the token accuracy
+        avg_loss = total_loss / len(dataloader)
+        avg_token_accuracy = total_correct_tokens / total_tokens
+        print(f"Total tokens: {total_tokens}")
+        print(f"Total correct tokens: {total_correct_tokens}")
+        print(
+            f"Avg loss: {avg_loss:.6f} "
+            f"Avg token accuracy: {avg_token_accuracy:.4f}\n",
+            flush=True
+        )
+        return avg_loss, avg_token_accuracy
+
+    def greedy_generate(self, model, src_tokens, max_len=40):
+        """
+        src_tokens: (1, L_src) single example
+        Returns a list of token ids for the generated miRNA (excluding BOS).
+        """
+        model.eval()
+        src_tokens = src_tokens.to(self.device)
+
+        with torch.no_grad():
+            # Encode mRNA once
+            src_mask = self.create_src_mask(src_tokens).to(self.device)
+            memory = model.mrna_encoder(src_tokens, src_mask)
+
+            # Start with BOS
+            generated = [self.bos_token_id]
+            for _ in range(max_len):
+                tgt_input = torch.tensor(generated, dtype=torch.long, device=self.device).unsqueeze(0)  # (1, L_tgt)
+                tgt_mask = self.create_tgt_mask(tgt_input).to(self.device)
+
+                # Decode
+                logits = model.mirna_decoder(x=tgt_input, memory=memory, src_mask=src_mask, tgt_mask=tgt_mask)
+                # Only last position logits used for next token
+                next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+                next_token_id = next_token_logits.argmax(dim=-1).item()
+
+                generated.append(next_token_id)
+
+                if next_token_id == self.pad_idx:
+                    break
+
+        # Remove BOS, keep everything until EOS (or full length)
+        return generated[1:]
+
+    def seed_everything(self, seed:int):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # for cudnn, if reproducibility is needed:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    
+    def run(self,
+            model,
+            train_path="",
+            valid_path="",
+            test_path="",
+            ckpt_path="",
+            evaluation=False,
+            predict=False,
+            finetune=False,
+            accumulation_step=1,
+            epochs=1,):
+        tokenizer = CharacterTokenizer(characters=["A", "T", "C", "G", "N"],
+                            add_special_tokens=False, 
+                            model_max_length=self.mrna_max_len,
+                            padding_side="right")
+        if predict:
+            D_test  = load_dataset(test_path, sep=',')
+            ds_test = TargetPredictionDataset(data=D_test,
+                                    mrna_max_len=self.mrna_max_len,
+                                    mirna_max_len=self.mirna_max_len,
+                                    tokenizer=tokenizer,)
+            test_loader = DataLoader(ds_test, 
+                                batch_size=self.batch_size, 
+                                shuffle=False)
+            for batch in test_loader:
+                src_tokens = batch["mrna_input_ids"].to(self.device)
+                generated = self.greedy_generate(model=model, src_tokens=src_tokens, max_len=self.mirna_max_len)
+                # save generated mirna to D_test and save the results to a csv file
+                D_test["generated_mirna"] = generated
+                save_path = os.path.join(os.path.dirname(test_path), f"generated_mirna_{self.mrna_max_len}.csv")
+                D_test.to_csv(save_path, index=False)
+                print(f"Generated mirna saved to {save_path}")
+        else:
+            # weights and bias initialization
+            wandb.login(key="600e5cca820a9fbb7580d052801b3acfd5c92da2")
+            run = wandb.init(
+                project="mirna-Generation",
+                name=f"{self.mrna_max_len}-epoch:{epochs}-batchsize:{self.batch_size}-2layerTrans-{self.ff_dim}MLP_hidden", 
+                config={
+                    "batch_size": self.batch_size * accumulation_step,
+                    "epochs": epochs,
+                    "learning rate": self.lr,
+                },
+                tags=["finetune", "best_composite_0.9911_0.9977_epoch11"],
+                save_code=False,
+                job_type="train"
+            )
+            self.seed_everything(seed=self.seed)
+            # load dataset
+            D_train  = load_dataset(train_path, sep=',')
+            D_val    = load_dataset(valid_path, sep=',')
+            ds_train = TargetPredictionDataset(data=D_train,
+                                            mrna_max_len=self.mrna_max_len,
+                                            mirna_max_len=self.mirna_max_len,
+                                            tokenizer=tokenizer,)
+            ds_val = TargetPredictionDataset(data=D_val,
+                                    mrna_max_len=self.mrna_max_len,
+                                    mirna_max_len=self.mirna_max_len,
+                                    tokenizer=tokenizer,)
+            train_loader = DataLoader(ds_train, 
+                                batch_size=self.batch_size, 
+                                shuffle=True)
+            val_loader   = DataLoader(ds_val, 
+                                    batch_size=self.batch_size, 
+                                    shuffle=False)
+            loss_fn   = nn.CrossEntropyLoss()
+            optimizer = AdamW(model.parameters(), lr=self.lr)
+
+            if finetune:
+                loaded_data = torch.load(ckpt_path, map_location=model.device)
+                current_state = model.state_dict()
+                encoder_state = {}
+                for key, value in loaded_data.items():
+                    if not key.startswith("mrna_encoder."):
+                        continue
+                    if key not in current_state:
+                        continue
+                    if value.shape != current_state[key].shape:
+                        if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
+                            orig_shape = value.shape
+                            value = current_state[key].clone()
+                            print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+                        else:
+                            print(f"Dropping mismatched key {key}: checkpoint {value.shape}, model {current_state[key].shape}")
+                            continue
+                    encoder_state[key] = value
+                model.load_state_dict(encoder_state, strict=False)
+
+                print(f"Loaded checkpoint from {ckpt_path}")
+                model.to(self.device)
+    
+            best_token_accuracy = 0
+            patience = 10
+            counter = 0
+            model_checkpoints_dir = os.path.join(
+                PROJ_HOME, 
+                "checkpoints", 
+                "TargetScan", 
+                "TwoTowerTransformer", 
+                "CNN-tokenized",
+                "TargetGeneration",
+                str(self.mrna_max_len),
+            )
+            os.makedirs(model_checkpoints_dir, exist_ok=True)
+            for epoch in range(epochs):
+                train_loss = self.train_loop(model=model,
+                                            dataloader=train_loader,
+                                            loss_fn=loss_fn,
+                                            optimizer=optimizer,
+                                            device=self.device,
+                                            epoch=epoch,
+                                            accumulation_step=accumulation_step)
+                val_loss, token_accuracy = self.eval_loop(model=model,
+                                            dataloader=val_loader,
+                                            device=self.device,
+                                            epoch=epoch,
+                                            loss_fn=loss_fn)
+                wandb.log({
+                    "epoch": epoch,
+                    "train/loss": train_loss,
+                    "val/loss": val_loss,
+                    "val/token_accuracy": token_accuracy,
+                })
+
+                if token_accuracy > best_token_accuracy:
+                    best_token_accuracy = token_accuracy
+                    torch.save(model.state_dict(), os.path.join(model_checkpoints_dir, f"best_token_accuracy_{best_token_accuracy:.4f}_epoch{epoch}.pth"))
+                else:
+                    counter +=1
+                    if counter >= patience:
+                        print(f"Early stopping triggered at epoch {epoch}. No improvement for {patience} consecutive epochs.")
+                        break
+            return train_loss, val_loss, best_token_accuracy
+
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 50
+    mrna_max_len = 30
     mirna_max_len = 24
     from Global_parameters import PROJ_HOME
-    train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_train_40_non_canonical.csv")
-    valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/TargetScan_validation_40_non_canonical.csv")
+    train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_train.csv")
+    valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_validation.csv")
     test_datapath  = os.path.join(PROJ_HOME, "Mimosa_dataset/mmu_mimosa_non_canonical_sites.csv")
 
-    model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,
-                                   mirna_max_len=mirna_max_len,
-                                   device='cuda:2',
-                                   epochs=15,
-                                   embed_dim=256,
-                                   ff_dim=512,
-                                   batch_size=32,
-                                   lr=1e-4,
-                                   seed=54,
-                                   predict_span=True,
-                                   predict_binding=True)
-    # total_params = sum(param.numel() for param in model.parameters())
-    # print(f"Total Parameters: {total_params}")
+    # train target generation model
+    model = TargetGenerationModel(mrna_max_len=mrna_max_len,
+                                  mirna_max_len=mirna_max_len,
+                                  device='cuda:0',
+                                  embed_dim=256,
+                                  ff_dim=512,
+                                  batch_size=32,
+                                  lr=1e-4,
+                                  seed=54,
+                                  pad_idx=4)
     model.run(model=model,
               train_path=train_datapath,
               valid_path=valid_datapath,
               test_path =test_datapath,
               evaluation=False,
-              predict=True,
-              finetune=False,
-              accumulation_step=1,
-              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/40/finetune_non_canonical_best_composite_1.0000_1.0000_epoch10.pth"))
+              predict=False,
+              finetune=True,
+              accumulation_step=8,
+              epochs=1,
+              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/30/best_composite_0.9911_0.9977_epoch11.pth"))
+    
+    # # train binding, span prediction model
+    # model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,
+    #                             mirna_max_len=mirna_max_len,
+    #                             device='cuda:0',
+    #                             epochs=15,
+    #                             embed_dim=256,
+    #                             ff_dim=512,
+    #                             batch_size=32,
+    #                             lr=1e-4,
+    #                             seed=54,
+    #                             predict_span=True,
+    #                             predict_binding=True)
+    # # total_params = sum(param.numel() for param in model.parameters())
+    # # print(f"Total Parameters: {total_params}")
+    # model.run(model=model,
+    #         train_path=train_datapath,
+    #         valid_path=valid_datapath,
+    #         test_path =test_datapath,
+    #         evaluation=False,
+    #         predict=False,
+    #         finetune=True,
+    #         accumulation_step=1,
+    #         ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/30/best_composite_0.9911_0.9977_epoch11.pth"))
