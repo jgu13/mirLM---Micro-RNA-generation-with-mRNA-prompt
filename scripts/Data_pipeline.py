@@ -459,7 +459,6 @@ class TargetPredictionDataset(torch.utils.data.Dataset):
         # add a bos (BOS) token at the beginning of the sequence
         box_token_id = self.tokenizer.convert_tokens_to_ids("[BOS]")
         mirna_ids = torch.cat([torch.tensor([box_token_id], dtype=torch.long), mirna_ids], dim=0)
-        mrna_ids = torch.cat([torch.tensor([box_token_id], dtype=torch.long), mrna_ids], dim=0)
         
         return {
             "mirna_input_ids": mirna_ids,

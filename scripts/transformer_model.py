@@ -30,6 +30,8 @@ class CNNTokenization(nn.Module):
     
     def forward(self, x):
         x1 = self.conv1(x) # (B, D, L)
+        x2 = self.conv2(x)
+
         x1 = x1.transpose(-1, -2) # (B, L. D)
         x1 = self.act(self.fc1(x1)) # (B, L, D)
         x1 = x1.transpose(-1, -2) # (B, D, L)
@@ -37,7 +39,6 @@ class CNNTokenization(nn.Module):
         x1 = x1.transpose(-1, -2) #(B, L, D)
         x1 = self.fc2(x1) # (B, L, embed_dim)
 
-        x2 = self.conv2(x)
         x2 = x2.transpose(-1, -2) # (B, L. D)
         x2 = self.act(self.fc1(x2)) # (B, L, D)
         x2 = x2.transpose(-1, -2) # (B, D, L)
@@ -345,14 +346,12 @@ class CrossAttentionPredictor(nn.Module):
     
     def forward(self, mirna, mrna, mrna_mask, mirna_mask):
         mirna_sn_embedding = self.sn_embedding(mirna)
-        # mirna_embedding = self.mirna_positional_embedding(mirna_embedding) # (batch_size, mirna_len, embed_dim)
         mrna_sn_embedding = self.sn_embedding(mrna)
-        # mrna_embedding = self.mrna_positional_embedding(mrna_embedding) # (batch_size, mrna_len, embed_dim)
         
         # add N-gram CNN-encoded embedding
-        mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2)) # (batch_size, embed_dim, mirna_len)
+        # mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2)) # (batch_size, embed_dim, mirna_len)
         mrna_cnn_embedding = self.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))  # (batch_size, embed_dim, mrna_len)
-        mirna_embedding = mirna_sn_embedding + mirna_cnn_embedding # (batch_size, mirna_len, embed_dim)
+        mirna_embedding = mirna_sn_embedding # + mirna_cnn_embedding # (batch_size, mirna_len, embed_dim)
         mrna_embedding = mrna_sn_embedding + mrna_cnn_embedding # (batch_size, mrna_len, embed_dim)
 
         mirna_embedding = self.mirna_encoder(mirna_embedding, mask=mirna_mask)  # (batch_size, mirna_len, embed_dim)
@@ -1086,7 +1085,8 @@ class TargetGenerationModel(nn.Module):
         self.mrna_max_len = mrna_max_len
         self.mirna_max_len = mirna_max_len
         self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
-        self.cnn_embedding = CNNTokenization(embed_dim=embed_dim)
+        self.cnn_embedding = CNNTokenization(embed_dim=embed_dim, causal=False)
+        self.mirna_cnn_embedding = CNNTokenization(embed_dim=embed_dim, causal=True)
         self.mrna_encoder = TransformerEncoder(
             num_layers=num_layers, 
             embed_dim=embed_dim, 
@@ -1116,7 +1116,8 @@ class TargetGenerationModel(nn.Module):
                 mirna_mask,):
         mrna_sn_embedding = self.sn_embedding(mrna)
         mirna_sn_embedding = self.sn_embedding(mirna)
-        mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2))
+        
+        mirna_cnn_embedding = self.mirna_cnn_embedding(mirna_sn_embedding.transpose(-1, -2))
         mirna_embedding = mirna_sn_embedding + mirna_cnn_embedding
         # mirna_embedding = self.mirna_encoder(mirna_embedding, mask=mirna_mask)
 
@@ -1201,7 +1202,7 @@ class TargetGenerationModel(nn.Module):
             src_mask = src_mask.to(device)
             tgt_mask = tgt_mask.to(device)
 
-            logits = self.forward(mirna=tgt_input, mrna=src_input, mrna_mask=src_mask, mirna_mask=tgt_mask)  # (B, L_mirna-1, n_classes)
+            logits = model(mirna=tgt_input, mrna=src_input, mrna_mask=src_mask, mirna_mask=tgt_mask)  # (B, L_mirna-1, n_classes)
             B, L, V = logits.size()
             loss = loss_fn(
                 logits.view(B*L, V), 
@@ -1272,14 +1273,16 @@ class TargetGenerationModel(nn.Module):
                 # 3) Forward pass
                 logits = model(mirna=tgt_input, mrna=src_input, mrna_mask=src_mask, mirna_mask=tgt_mask)  # (B, L_mirna-1, n_classes)
                 B, L, V = logits.size()
-                total_tokens += B * L
+                valid_mask = (tgt_output != self.pad_idx)
+                total_tokens += valid_mask.sum().item()
                 loss = loss_fn(
                     logits.view(B*L, V), 
                     tgt_output.reshape(B*L,)) # (B*L, )
                 total_loss += loss.item()
-                total_correct_tokens += (logits.argmax(dim=-1) == tgt_output).sum().item() # check the correctness of the token accuracy
+                preds = logits.argmax(dim=-1)
+                total_correct_tokens += ((preds == tgt_output) & valid_mask).sum().item() # only count real tokens
         avg_loss = total_loss / len(dataloader)
-        avg_token_accuracy = total_correct_tokens / total_tokens
+        avg_token_accuracy = total_correct_tokens / max(1, total_tokens)
         print(f"Total tokens: {total_tokens}")
         print(f"Total correct tokens: {total_correct_tokens}")
         print(
@@ -1289,7 +1292,7 @@ class TargetGenerationModel(nn.Module):
         )
         return avg_loss, avg_token_accuracy
 
-    def greedy_generate(self, model, src_tokens, max_len=40):
+    def greedy_generate(self, model, src_tokens, bos_token_id, pad_token_id, max_len=40):
         """
         src_tokens: (1, L_src) single example
         Returns a list of token ids for the generated miRNA (excluding BOS).
@@ -1300,27 +1303,45 @@ class TargetGenerationModel(nn.Module):
         with torch.no_grad():
             # Encode mRNA once
             src_mask = self.create_src_mask(src_tokens).to(self.device)
-            memory = model.mrna_encoder(src_tokens, src_mask)
+            
+            mrna_sn_embedding = model.sn_embedding(src_tokens)
+            mrna_cnn_embedding = model.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))
+            src_embedding = mrna_sn_embedding + mrna_cnn_embedding
+            
+            memory = model.mrna_encoder(src_embedding, src_mask)
 
             # Start with BOS
-            generated = [self.bos_token_id]
+            batch_size = src_tokens.size(0)
+            generated = torch.full(
+                (batch_size, 1), 
+                bos_token_id, 
+                dtype=torch.long, 
+                device=self.device
+            )
+            finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
             for _ in range(max_len):
-                tgt_input = torch.tensor(generated, dtype=torch.long, device=self.device).unsqueeze(0)  # (1, L_tgt)
+                tgt_input = generated
                 tgt_mask = self.create_tgt_mask(tgt_input).to(self.device)
 
+                mirna_sn_embedding = model.sn_embedding(tgt_input)
+                mirna_cnn_embedding = model.mirna_cnn_embedding(mirna_sn_embedding.transpose(-1, -2))
+                tgt_embedding = mirna_sn_embedding + mirna_cnn_embedding
+
                 # Decode
-                logits = model.mirna_decoder(x=tgt_input, memory=memory, src_mask=src_mask, tgt_mask=tgt_mask)
+                out = model.mirna_decoder(x=tgt_embedding, memory=memory, src_mask=src_mask, tgt_mask=tgt_mask)
+                logits = model.predictor_head(out)
+                
                 # Only last position logits used for next token
-                next_token_logits = logits[:, -1, :]  # (1, vocab_size)
-                next_token_id = next_token_logits.argmax(dim=-1).item()
-
-                generated.append(next_token_id)
-
-                if next_token_id == self.pad_idx:
+                next_token_logits = logits[:, -1, :]  # (B, vocab_size)
+                next_token_id = next_token_logits.argmax(dim=-1) # [B]
+                next_token_id = torch.where(finished, torch.full_like(next_token_id, pad_token_id), next_token_id)
+                generated = torch.cat([generated, next_token_id.unsqueeze(1)], dim=1) # [B, L_tgt+1]
+                finished = finished | (next_token_id == pad_token_id)
+                if finished.all():
                     break
 
-        # Remove BOS, keep everything until EOS (or full length)
-        return generated[1:]
+        # Remove BOS, keep everything until PAD (or full length)
+        return generated[:, 1:]
 
     def seed_everything(self, seed:int):
         random.seed(seed)
@@ -1336,7 +1357,7 @@ class TargetGenerationModel(nn.Module):
             train_path="",
             valid_path="",
             test_path="",
-            ckpt_path="",
+            ckpt_path=None,
             evaluation=False,
             predict=False,
             finetune=False,
@@ -1355,14 +1376,46 @@ class TargetGenerationModel(nn.Module):
             test_loader = DataLoader(ds_test, 
                                 batch_size=self.batch_size, 
                                 shuffle=False)
+            if ckpt_path is not None:
+                loaded_data = torch.load(ckpt_path, map_location=model.device)
+                current_state = model.state_dict()
+                encoder_state = {}
+                for key, value in loaded_data.items():
+                    if key not in current_state:
+                        continue
+                    if value.shape != current_state[key].shape:
+                        if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
+                            orig_shape = value.shape
+                            value = current_state[key].clone()
+                            print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+                        else:
+                            print(f"Dropping mismatched key {key}: checkpoint {value.shape}, model {current_state[key].shape}")
+                            continue
+                    encoder_state[key] = value
+                model.load_state_dict(encoder_state, strict=False)
+
+                print(f"Loaded checkpoint from {ckpt_path}")
+                
+            model.to(self.device)
+
+            all_generated_seqs = []
             for batch in test_loader:
                 src_tokens = batch["mrna_input_ids"].to(self.device)
-                generated = self.greedy_generate(model=model, src_tokens=src_tokens, max_len=self.mirna_max_len)
-                # save generated mirna to D_test and save the results to a csv file
-                D_test["generated_mirna"] = generated
-                save_path = os.path.join(os.path.dirname(test_path), f"generated_mirna_{self.mrna_max_len}.csv")
-                D_test.to_csv(save_path, index=False)
-                print(f"Generated mirna saved to {save_path}")
+                generated = self.greedy_generate(model=model, 
+                                                src_tokens=src_tokens, 
+                                                max_len=self.mirna_max_len, 
+                                                bos_token_id=tokenizer.convert_tokens_to_ids("[BOS]"),
+                                                pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"))
+                # Decode
+                for i in range(generated.size(0)):
+                    seq_ids = generated[i].tolist()
+                    decoded = tokenizer.decode(seq_ids, skip_special_tokens=True)
+                    all_generated_seqs.append(decoded)
+
+            D_test["generated_mirna"] = all_generated_seqs
+            save_path = os.path.join(os.path.dirname(test_path), "generated_mirna_positive_samples_30_random_samples_validation.csv")
+            D_test.to_csv(save_path, index=False)
+            print(f"Generated mirna saved to {save_path}")
         else:
             # weights and bias initialization
             wandb.login(key="600e5cca820a9fbb7580d052801b3acfd5c92da2")
@@ -1396,7 +1449,7 @@ class TargetGenerationModel(nn.Module):
             val_loader   = DataLoader(ds_val, 
                                     batch_size=self.batch_size, 
                                     shuffle=False)
-            loss_fn   = nn.CrossEntropyLoss()
+            loss_fn   = nn.CrossEntropyLoss(ignore_index=self.pad_idx)
             optimizer = AdamW(model.parameters(), lr=self.lr)
 
             if finetune:
@@ -1404,7 +1457,8 @@ class TargetGenerationModel(nn.Module):
                 current_state = model.state_dict()
                 encoder_state = {}
                 for key, value in loaded_data.items():
-                    if not key.startswith("mrna_encoder."):
+                    # skip mirna_encoder
+                    if key.startswith("mirna_encoder."):
                         continue
                     if key not in current_state:
                         continue
@@ -1472,7 +1526,7 @@ if __name__ == "__main__":
     from Global_parameters import PROJ_HOME
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_train.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_validation.csv")
-    test_datapath  = os.path.join(PROJ_HOME, "Mimosa_dataset/mmu_mimosa_non_canonical_sites.csv")
+    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_validation.csv")
 
     # train target generation model
     model = TargetGenerationModel(mrna_max_len=mrna_max_len,
@@ -1481,6 +1535,7 @@ if __name__ == "__main__":
                                   embed_dim=256,
                                   ff_dim=512,
                                   batch_size=32,
+                                  epochs=20,
                                   lr=1e-4,
                                   seed=54,
                                   pad_idx=4)
@@ -1489,11 +1544,10 @@ if __name__ == "__main__":
               valid_path=valid_datapath,
               test_path =test_datapath,
               evaluation=False,
-              predict=False,
-              finetune=True,
+              predict=True,
+              finetune=False,
               accumulation_step=8,
-              epochs=1,
-              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/30/best_composite_0.9911_0.9977_epoch11.pth"))
+              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/TargetGeneration/30/best_token_accuracy_0.9456_epoch19.pth"))
     
     # # train binding, span prediction model
     # model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,
