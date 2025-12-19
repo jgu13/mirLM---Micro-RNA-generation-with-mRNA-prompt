@@ -236,12 +236,12 @@ class TransformerDecoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, memory, src_mask=None, tgt_mask=None):
-        x = self.self_attn(x, x, x, mask=tgt_mask)
-        x = self.norm1(x + self.dropout(x))
-        x = self.cross_attn(x, memory, memory, mask=src_mask)
-        x = self.norm2(x + self.dropout(x))
-        x = self.feed_forward(x)
-        x = self.norm3(x + self.dropout(x))
+        attn_output = self.self_attn(x, x, x, mask=tgt_mask)
+        x = self.norm1(x + self.dropout(attn_output))
+        cross_attn_output = self.cross_attn(x, memory, memory, mask=src_mask)
+        x = self.norm2(x + self.dropout(cross_attn_output))
+        ff_output = self.feed_forward(x)
+        x = self.norm3(x + self.dropout(ff_output))
         return x
 
 class TransformerDecoder(nn.Module):
@@ -349,9 +349,9 @@ class CrossAttentionPredictor(nn.Module):
         mrna_sn_embedding = self.sn_embedding(mrna)
         
         # add N-gram CNN-encoded embedding
-        # mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2)) # (batch_size, embed_dim, mirna_len)
+        mirna_cnn_embedding = self.cnn_embedding(mirna_sn_embedding.transpose(-1, -2)) # (batch_size, embed_dim, mirna_len)
         mrna_cnn_embedding = self.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))  # (batch_size, embed_dim, mrna_len)
-        mirna_embedding = mirna_sn_embedding # + mirna_cnn_embedding # (batch_size, mirna_len, embed_dim)
+        mirna_embedding = mirna_sn_embedding + mirna_cnn_embedding # (batch_size, mirna_len, embed_dim)
         mrna_embedding = mrna_sn_embedding + mrna_cnn_embedding # (batch_size, mrna_len, embed_dim)
 
         mirna_embedding = self.mirna_encoder(mirna_embedding, mask=mirna_mask)  # (batch_size, mirna_len, embed_dim)
@@ -1060,24 +1060,22 @@ class TargetGenerationModel(nn.Module):
                  lr:float,
                  mirna_max_len:int,
                  mrna_max_len:int, 
-                 vocab_size:int=12, # 7 special tokens + 5 bases
+                 vocab_size:int=13, # 8 special tokens + 5 bases
                  num_layers:int=2, 
                  embed_dim:int=256, 
                  num_heads:int=2, 
                  ff_dim:int=512,
                  hidden_sizes:list[int]=[512, 512],
-                 n_classes:int=12, 
+                 n_classes:int=13, 
                  dropout_rate:float=0.1,
                  device:str='cuda',
                  predict_span=True,
                  predict_binding=False,
-                 pad_idx=4,
                  seed:int=42):
         super(TargetGenerationModel, self).__init__()
         self.embed_dim = embed_dim
         self.dropout_rate = dropout_rate
         self.device = device
-        self.pad_idx = pad_idx
         self.batch_size = batch_size
         self.lr = lr
         self.seed = seed
@@ -1085,8 +1083,7 @@ class TargetGenerationModel(nn.Module):
         self.mrna_max_len = mrna_max_len
         self.mirna_max_len = mirna_max_len
         self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
-        self.cnn_embedding = CNNTokenization(embed_dim=embed_dim, causal=False)
-        self.mirna_cnn_embedding = CNNTokenization(embed_dim=embed_dim, causal=True)
+        self.cnn_embedding = CNNTokenization(embed_dim=embed_dim)
         self.mrna_encoder = TransformerEncoder(
             num_layers=num_layers, 
             embed_dim=embed_dim, 
@@ -1117,9 +1114,7 @@ class TargetGenerationModel(nn.Module):
         mrna_sn_embedding = self.sn_embedding(mrna)
         mirna_sn_embedding = self.sn_embedding(mirna)
         
-        mirna_cnn_embedding = self.mirna_cnn_embedding(mirna_sn_embedding.transpose(-1, -2))
-        mirna_embedding = mirna_sn_embedding + mirna_cnn_embedding
-        # mirna_embedding = self.mirna_encoder(mirna_embedding, mask=mirna_mask)
+        mirna_embedding = mirna_sn_embedding # no CNN embedding for miRNA
 
         mrna_cnn_embedding = self.cnn_embedding(mrna_sn_embedding.transpose(-1, -2))
         mrna_embedding = mrna_sn_embedding + mrna_cnn_embedding
@@ -1141,16 +1136,16 @@ class TargetGenerationModel(nn.Module):
     def create_src_mask(self, src_tokens):
         """
         src_tokens: (B, L_src)
-        Returns mask of shape (B, L_src, L_src) with 1 for valid, 0 for pad.
+        Returns mask of shape (B, 1, L_src) with 1 for valid, 0 for pad.
         Here we only mask out padded positions as keys.
         """
         B, L_src = src_tokens.size()
         # src_key_padding_mask: (B, L_src) -> 1 if non-pad, 0 if pad
-        non_pad = (src_tokens != self.pad_idx).to(torch.uint8)
+        non_pad = (src_tokens != self.pad_idx).to(torch.uint8) # (B, L_src)
         # Broadcast to (B, L_src, L_src): query positions always allowed,
         # key positions masked if pad.
-        src_mask = non_pad.unsqueeze(1)
-        return src_mask  # uint8 1/0
+        src_mask = non_pad.unsqueeze(1) # (B, 1, L_src)
+        return src_mask
 
     def create_tgt_mask(self, tgt_input):
         """
@@ -1208,7 +1203,7 @@ class TargetGenerationModel(nn.Module):
                 logits.view(B*L, V), 
                 tgt_output.reshape(B*L,)) # (B*L, )
 
-            loss = loss / accumulation_step # why do we divide by accumulation_step here?
+            loss = loss / accumulation_step 
             loss.backward()
             bs = batch["mrna_input_ids"].size(0)
             if accumulation_step != 1:
@@ -1292,7 +1287,7 @@ class TargetGenerationModel(nn.Module):
         )
         return avg_loss, avg_token_accuracy
 
-    def greedy_generate(self, model, src_tokens, bos_token_id, pad_token_id, max_len=40):
+    def greedy_generate(self, model, src_tokens, max_len=40):
         """
         src_tokens: (1, L_src) single example
         Returns a list of token ids for the generated miRNA (excluding BOS).
@@ -1314,7 +1309,7 @@ class TargetGenerationModel(nn.Module):
             batch_size = src_tokens.size(0)
             generated = torch.full(
                 (batch_size, 1), 
-                bos_token_id, 
+                self.bos_idx, 
                 dtype=torch.long, 
                 device=self.device
             )
@@ -1324,8 +1319,7 @@ class TargetGenerationModel(nn.Module):
                 tgt_mask = self.create_tgt_mask(tgt_input).to(self.device)
 
                 mirna_sn_embedding = model.sn_embedding(tgt_input)
-                mirna_cnn_embedding = model.mirna_cnn_embedding(mirna_sn_embedding.transpose(-1, -2))
-                tgt_embedding = mirna_sn_embedding + mirna_cnn_embedding
+                tgt_embedding = mirna_sn_embedding
 
                 # Decode
                 out = model.mirna_decoder(x=tgt_embedding, memory=memory, src_mask=src_mask, tgt_mask=tgt_mask)
@@ -1334,14 +1328,94 @@ class TargetGenerationModel(nn.Module):
                 # Only last position logits used for next token
                 next_token_logits = logits[:, -1, :]  # (B, vocab_size)
                 next_token_id = next_token_logits.argmax(dim=-1) # [B]
-                next_token_id = torch.where(finished, torch.full_like(next_token_id, pad_token_id), next_token_id)
+                pad_fill = torch.full_like(next_token_id, self.pad_idx) # [B]
+                next_token_id = torch.where(finished, pad_fill, next_token_id)
                 generated = torch.cat([generated, next_token_id.unsqueeze(1)], dim=1) # [B, L_tgt+1]
-                finished = finished | (next_token_id == pad_token_id)
+                finished = finished | (next_token_id == self.eos_idx)
+
                 if finished.all():
                     break
 
         # Remove BOS, keep everything until PAD (or full length)
         return generated[:, 1:]
+    
+    @staticmethod
+    def partial_load_old_predictor_ckpt(
+            model,
+            ckpt_path: str,
+            device: str,
+            old_prefix: str = "predictor.",
+            copy_rotary_buffers: bool = False,
+            init_new_row_from: str = "PAD",  # "PAD" or "RANDOM"
+        ):
+        sd_old = torch.load(ckpt_path, map_location=device)
+
+        sd_new = model.state_dict()
+        to_load = {}
+
+        # Helper: remap old key -> new key by stripping "predictor."
+        def remap_key(k: str) -> str:
+            if k.startswith(old_prefix):
+                return k[len(old_prefix):] # strip "predictor."
+            return k
+
+        # 1) Load shape-matched weights for sn_embedding/cnn_embedding/mrna_encoder
+        allowed_prefixes = ("sn_embedding.", "cnn_embedding.", "mrna_encoder.")
+        for k_old, v_old in sd_old.items():
+            k_new = remap_key(k_old)
+
+            if not k_new.startswith(allowed_prefixes):
+                continue
+            if k_new not in sd_new:
+                continue
+
+            # Rotary buffers: either skip (recommended) or copy if shape matches
+            if ("rotary.cos_emb" in k_new) or ("rotary.sin_emb" in k_new):
+                if copy_rotary_buffers and v_old.shape == sd_new[k_new].shape:
+                    to_load[k_new] = v_old
+                continue
+
+            # Normal shape match
+            if v_old.shape == sd_new[k_new].shape:
+                to_load[k_new] = v_old
+            # sn_embedding.weight will mismatch (12 vs 13) -> handled next
+            # Anything else mismatched -> skip
+            else:
+                continue
+
+        missing, unexpected = model.load_state_dict(to_load, strict=False)
+        print(f"[partial_load] loaded shape-matched tensors: {len(to_load)}")
+        # print("missing:", missing)
+        # print("unexpected:", unexpected)
+
+        # 2) Special case: sn_embedding.weight row-wise partial copy
+        old_w_key = old_prefix + "sn_embedding.weight"
+        if old_w_key in sd_old:
+            old_w = sd_old[old_w_key]  # (12, D)
+            new_w = model.sn_embedding.weight.data  # (13, D)
+
+            # Copy overlapping rows
+            n_copy = min(old_w.shape[0], new_w.shape[0])
+            new_w[:n_copy].copy_(old_w[:n_copy])
+            print(f"[partial_load] sn_embedding: copied {n_copy} rows")
+
+            # Initialize extra rows (e.g., EOS row)
+            if new_w.shape[0] > old_w.shape[0]:
+                start = old_w.shape[0]
+                if init_new_row_from.upper() == "PAD":
+                    pad_idx = getattr(model, "pad_idx", None)
+                    if pad_idx is None:
+                        raise ValueError("model.pad_idx not set, can't init new row from PAD")
+                    new_w[start:].copy_(new_w[pad_idx].unsqueeze(0).repeat(new_w.shape[0] - start, 1)) # initia
+                    print(f"[partial_load] initialized new rows {start}..{new_w.shape[0]-1} from PAD row {pad_idx}")
+                else:
+                    nn.init.normal_(new_w[start:], mean=0.0, std=0.02)
+                    print(f"[partial_load] random-initialized new rows {start}..{new_w.shape[0]-1}")
+
+        else:
+            print("[partial_load] WARNING: old sn_embedding.weight not found in checkpoint")
+
+        return model
 
     def seed_everything(self, seed:int):
         random.seed(seed)
@@ -1365,10 +1439,13 @@ class TargetGenerationModel(nn.Module):
             epochs=1,):
         tokenizer = CharacterTokenizer(characters=["A", "T", "C", "G", "N"],
                             add_special_tokens=False, 
-                            model_max_length=self.mrna_max_len,
+                            model_max_length=self.mrna_max_len-2, # minus 2 for BOS and EOS tokens
                             padding_side="right")
+        self.pad_idx = tokenizer.convert_tokens_to_ids("[PAD]")
+        self.bos_idx = tokenizer.convert_tokens_to_ids("[BOS]")
+        self.eos_idx = tokenizer.convert_tokens_to_ids("[EOS]")
         if predict:
-            D_test  = load_dataset(test_path, sep=',')
+            D_test  = load_dataset(test_path, sep='\t')
             ds_test = TargetPredictionDataset(data=D_test,
                                     mrna_max_len=self.mrna_max_len,
                                     mirna_max_len=self.mirna_max_len,
@@ -1383,15 +1460,15 @@ class TargetGenerationModel(nn.Module):
                 for key, value in loaded_data.items():
                     if key not in current_state:
                         continue
-                    if value.shape != current_state[key].shape:
-                        if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
-                            orig_shape = value.shape
-                            value = current_state[key].clone()
-                            print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
+                    # Rotary buffers: either skip (recommended) or copy if shape matches
+                    if ("rotary.cos_emb" in key) or ("rotary.sin_emb" in key):
+                        if value.shape == current_state[key].shape:
+                            encoder_state[key] = value
                         else:
                             print(f"Dropping mismatched key {key}: checkpoint {value.shape}, model {current_state[key].shape}")
                             continue
-                    encoder_state[key] = value
+                    else:
+                        encoder_state[key] = value
                 model.load_state_dict(encoder_state, strict=False)
 
                 print(f"Loaded checkpoint from {ckpt_path}")
@@ -1403,9 +1480,7 @@ class TargetGenerationModel(nn.Module):
                 src_tokens = batch["mrna_input_ids"].to(self.device)
                 generated = self.greedy_generate(model=model, 
                                                 src_tokens=src_tokens, 
-                                                max_len=self.mirna_max_len, 
-                                                bos_token_id=tokenizer.convert_tokens_to_ids("[BOS]"),
-                                                pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"))
+                                                max_len=self.mirna_max_len)
                 # Decode
                 for i in range(generated.size(0)):
                     seq_ids = generated[i].tolist()
@@ -1413,13 +1488,13 @@ class TargetGenerationModel(nn.Module):
                     all_generated_seqs.append(decoded)
 
             D_test["generated_mirna"] = all_generated_seqs
-            save_path = os.path.join(os.path.dirname(test_path), "generated_mirna_positive_samples_30_random_samples_validation.csv")
+            save_path = os.path.join(os.path.dirname(test_path), "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
             D_test.to_csv(save_path, index=False)
             print(f"Generated mirna saved to {save_path}")
         else:
             # weights and bias initialization
             wandb.login(key="600e5cca820a9fbb7580d052801b3acfd5c92da2")
-            run = wandb.init(
+            wandb.init(
                 project="mirna-Generation",
                 name=f"{self.mrna_max_len}-epoch:{epochs}-batchsize:{self.batch_size}-2layerTrans-{self.ff_dim}MLP_hidden", 
                 config={
@@ -1453,29 +1528,17 @@ class TargetGenerationModel(nn.Module):
             optimizer = AdamW(model.parameters(), lr=self.lr)
 
             if finetune:
-                loaded_data = torch.load(ckpt_path, map_location=model.device)
-                current_state = model.state_dict()
-                encoder_state = {}
-                for key, value in loaded_data.items():
-                    # skip mirna_encoder
-                    if key.startswith("mirna_encoder."):
-                        continue
-                    if key not in current_state:
-                        continue
-                    if value.shape != current_state[key].shape:
-                        if "rotary.cos_emb" in key or "rotary.sin_emb" in key:
-                            orig_shape = value.shape
-                            value = current_state[key].clone()
-                            print(f"Replaced rotary buffer {key} with shape {orig_shape} to match model shape {current_state[key].shape}")
-                        else:
-                            print(f"Dropping mismatched key {key}: checkpoint {value.shape}, model {current_state[key].shape}")
-                            continue
-                    encoder_state[key] = value
-                model.load_state_dict(encoder_state, strict=False)
-
+                model = self.partial_load_old_predictor_ckpt(
+                            model=model,
+                            ckpt_path=ckpt_path,
+                            device=model.device,
+                            copy_rotary_buffers=False,
+                            init_new_row_from="PAD",
+                        )
                 print(f"Loaded checkpoint from {ckpt_path}")
-                model.to(self.device)
-    
+
+            model.to(self.device)
+
             best_token_accuracy = 0
             patience = 10
             counter = 0
@@ -1522,11 +1585,11 @@ class TargetGenerationModel(nn.Module):
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
     mrna_max_len = 30
-    mirna_max_len = 24
+    mirna_max_len = 24+2 # plus 2 for BOS and EOS tokens
     from Global_parameters import PROJ_HOME
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_train.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_validation.csv")
-    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_random_samples_validation.csv")
+    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_randomized_start_validation_random_samples.csv")
 
     # train target generation model
     model = TargetGenerationModel(mrna_max_len=mrna_max_len,
@@ -1535,10 +1598,10 @@ if __name__ == "__main__":
                                   embed_dim=256,
                                   ff_dim=512,
                                   batch_size=32,
-                                  epochs=20,
+                                  vocab_size=13,
+                                  n_classes=13,
                                   lr=1e-4,
-                                  seed=54,
-                                  pad_idx=4)
+                                  seed=54,)
     model.run(model=model,
               train_path=train_datapath,
               valid_path=valid_datapath,
@@ -1547,7 +1610,8 @@ if __name__ == "__main__":
               predict=True,
               finetune=False,
               accumulation_step=8,
-              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/TargetGeneration/30/best_token_accuracy_0.9456_epoch19.pth"))
+              epochs=20,
+              ckpt_path=os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/TargetGeneration/30/best_token_accuracy_0.9554_epoch19.pth"))
     
     # # train binding, span prediction model
     # model = QuestionAnsweringModel(mrna_max_len=mrna_max_len,

@@ -8,7 +8,7 @@ import pandas as pd
 from Global_parameters import PROJ_HOME
 
 
-DATASET_PATH = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_random_samples_validation.csv")
+DATASET_PATH = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
 SEED_START_COL = "seed start"
 SEED_END_COL = "seed end"
 MIRNA_SEQ_COL = "miRNA sequence"
@@ -110,7 +110,7 @@ def plot_accuracy(metrics: dict[str, float]) -> None:
         )
 
     fig.tight_layout()
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_seed_and_non_seed_accuracy_30_random_samples_validation.png")
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_seed_and_non_seed_accuracy_30_randomized_start_validation_random_samples.png")
     # save the figure to the project home
     fig.savefig(save_path)
     print(f"Figure saved to {save_path}")
@@ -121,7 +121,7 @@ def plot_per_seed_accuracy(per_seed_accuracy: list[float]) -> None:
     plt.boxplot(per_seed_accuracy)
     plt.ylabel("Accuracy")
     plt.title("Predicted miRNA\naverage per-seed accuracy")
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_mirna_average_per_seed_accuracy_30_random_samples_validation.png")
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_mirna_average_per_seed_accuracy_30_randomized_start_validation_random_samples.png")
     plt.savefig(save_path)
     print(f"Figure saved to {save_path}")
 

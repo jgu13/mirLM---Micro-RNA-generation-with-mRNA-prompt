@@ -55,12 +55,11 @@ class CharacterTokenizer(PreTrainedTokenizer):
         self.characters = characters
         self.model_max_length = model_max_length
         bos_token = AddedToken("[BOS]", lstrip=False, rstrip=False)
-        eos_token = AddedToken("[SEP]", lstrip=False, rstrip=False)
+        eos_token = AddedToken("[EOS]", lstrip=False, rstrip=False)
         sep_token = AddedToken("[SEP]", lstrip=False, rstrip=False)
         cls_token = AddedToken("[CLS]", lstrip=False, rstrip=False)
         pad_token = AddedToken("[PAD]", lstrip=False, rstrip=False)
         unk_token = AddedToken("[UNK]", lstrip=False, rstrip=False)
-
         mask_token = AddedToken("[MASK]", lstrip=True, rstrip=False)
 
         super().__init__(
@@ -87,6 +86,7 @@ class CharacterTokenizer(PreTrainedTokenizer):
             "[UNK]": 6,
             **{ch: i + 7 for i, ch in enumerate(characters)},
         }
+        self._vocab_str_to_int["[EOS]"] = len(self._vocab_str_to_int)
         self._vocab_int_to_str = {v: k for k, v in self._vocab_str_to_int.items()}
 
     @property
@@ -428,6 +428,10 @@ class TargetPredictionDataset(torch.utils.data.Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
+        bos = self.tokenizer.convert_tokens_to_ids("[BOS]")
+        eos = self.tokenizer.convert_tokens_to_ids("[EOS]")
+        pad = self.tokenizer.convert_tokens_to_ids("[PAD]")
+
         mrna_seq = self.data[self.mRNA_col].iat[idx]
         mirna_seq = self.data[self.miRNA_col].iat[idx]
 
@@ -437,29 +441,38 @@ class TargetPredictionDataset(torch.utils.data.Dataset):
         mirna_encoded = self.tokenizer(
             mirna_seq,
             add_special_tokens=False,
-            padding="max_length",
+            padding=False, # we will handle padding later
             truncation=True,
-            max_length=self.mirna_max_len, 
-            return_attention_mask=True,
+            max_length=self.mirna_max_len - 2, 
         )
+        assert pad not in mirna_encoded["input_ids"], "Tokenizer unexpectedly padded even though padding=False"
+        mirna_encoded["input_ids"] = [bos] + mirna_encoded["input_ids"] + [eos]
+        # pad to fixed length
+        if len(mirna_encoded["input_ids"]) < self.mirna_max_len:
+            mirna_encoded["input_ids"] = mirna_encoded["input_ids"] + [pad] * (self.mirna_max_len - len(mirna_encoded["input_ids"]))
+        else:
+            mirna_encoded["input_ids"] = mirna_encoded["input_ids"][:self.mirna_max_len]
 
         # Tokenize mrna
         mrna_encoded = self.tokenizer(
             mrna_seq,
             add_special_tokens=False,
-            padding="max_length",
+            padding=False, # we will handle padding later
             truncation=True,
-            max_length=self.mrna_max_len,  
-            return_attention_mask=True,
+            max_length=self.mrna_max_len - 1,  
         )
+        assert pad not in mrna_encoded["input_ids"], "Tokenizer unexpectedly padded even though padding=False"
+        mrna_encoded["input_ids"] = mrna_encoded["input_ids"] + [eos]
+
+        # pad to fixed length
+        if len(mrna_encoded["input_ids"]) < self.mrna_max_len:
+            mrna_encoded["input_ids"] = mrna_encoded["input_ids"] + [pad] * (self.mrna_max_len - len(mrna_encoded["input_ids"]))
+        else:
+            mrna_encoded["input_ids"] = mrna_encoded["input_ids"][:self.mrna_max_len]
     
         mirna_ids = torch.tensor(mirna_encoded["input_ids"], dtype=torch.long)
         mrna_ids = torch.tensor(mrna_encoded["input_ids"], dtype=torch.long)
 
-        # add a bos (BOS) token at the beginning of the sequence
-        box_token_id = self.tokenizer.convert_tokens_to_ids("[BOS]")
-        mirna_ids = torch.cat([torch.tensor([box_token_id], dtype=torch.long), mirna_ids], dim=0)
-        
         return {
             "mirna_input_ids": mirna_ids,
             "mrna_input_ids": mrna_ids
