@@ -2,13 +2,13 @@ import os
 import math
 from pathlib import Path
 
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 import pandas as pd
 from Global_parameters import PROJ_HOME
 
 
-DATASET_PATH = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
 SEED_START_COL = "seed start"
 SEED_END_COL = "seed end"
 MIRNA_SEQ_COL = "miRNA sequence"
@@ -89,50 +89,57 @@ def compute_accuracy(df: pd.DataFrame) -> tuple[dict[str, float], list[float]]:
     return metrics, [acc for acc in per_seed_accuracy if not math.isnan(acc)]
 
 
-def plot_accuracy(metrics: dict[str, float]) -> None:
-    labels = list(metrics.keys())
-    values = [metrics[label] for label in labels]
+def plot_accuracy(metrics1: dict[str, float], metrics2: dict[str, float]) -> None:
+    categories = ["Overall", "Seed", "Non-seed"]
+    # Ensure values are in the correct order, default to 0 if missing
+    values1 = [metrics1.get(cat, 0.0) for cat in categories]
+    values2 = [metrics2.get(cat, 0.0) for cat in categories]
+    
+    x = np.arange(len(categories))
+    width = 0.35
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    bars = ax.bar(labels, values, color=["#1f77b4", "#ff7f0e", "#2ca02c"][: len(labels)])
+    # Without CNN
+    ax.bar(x - width/2, values1, width, color="#FBB797", label="Without CNN")
+    # With CNN
+    ax.bar(x + width/2, values2, width, color="#865DD6", label="With CNN")
+    
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0, 1)
-    ax.set_title("Predicted miRNA seed vs non-seed Accuracy")
+    ax.set_title("Predicted miRNA seed vs non-seed Accuracy (randomized start validation)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-
-    for bar, value in zip(bars, values, strict=True):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            value + 0.02,
-            f"{value * 100:.1f}%",
-            ha="center",
-            va="bottom",
-        )
-
-    fig.tight_layout()
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_seed_and_non_seed_accuracy_30_randomized_start_validation_random_samples.png")
+    ax.legend()
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_seed_and_non_seed_accuracy_30_randomized_start_validation_random_samples_comparison.png")
     # save the figure to the project home
     fig.savefig(save_path)
     print(f"Figure saved to {save_path}")
 
-def plot_per_seed_accuracy(per_seed_accuracy: list[float]) -> None:
-    plt.figure(figsize=(3, 4))
+def plot_per_seed_accuracy(per_seed_accuracy1: list[float], per_seed_accuracy2: list[float]) -> None:
+    plt.figure(figsize=(4, 4))
     # plot boxplot of per_seed_accuracy
-    plt.boxplot(per_seed_accuracy)
+    plt.boxplot([per_seed_accuracy1, per_seed_accuracy2], labels=["Without CNN", "With CNN"])
     plt.ylabel("Accuracy")
     plt.title("Predicted miRNA\naverage per-seed accuracy")
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_mirna_average_per_seed_accuracy_30_randomized_start_validation_random_samples.png")
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "30", "generated_mirna_average_per_seed_accuracy_30_randomized_start_validation_random_samples_comparison.png")
     plt.savefig(save_path)
     print(f"Figure saved to {save_path}")
 
 def main() -> None:
-    dataframe = pd.read_csv(DATASET_PATH)
-    metrics, per_seed_accuracy = compute_accuracy(dataframe)
-    if not metrics:
+    DATASET_PATH1 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
+    DATASET_PATH2 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_random_samples_validation_with_cnn.csv")
+    
+    dataframe1 = pd.read_csv(DATASET_PATH1)
+    dataframe2 = pd.read_csv(DATASET_PATH2)
+    metrics1, per_seed_accuracy1 = compute_accuracy(dataframe1)
+    metrics2, per_seed_accuracy2 = compute_accuracy(dataframe2)
+    if not metrics1 or not metrics2:
         raise RuntimeError("No valid miRNA / generated_mirna pairs were found.")
-    plot_accuracy(metrics)
-    plot_per_seed_accuracy(per_seed_accuracy)
+    plot_accuracy(metrics1, metrics2)
+    plot_per_seed_accuracy(per_seed_accuracy1, per_seed_accuracy2)
 
 
 if __name__ == "__main__":
     main()
+
