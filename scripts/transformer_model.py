@@ -1056,10 +1056,10 @@ class QuestionAnsweringModel(nn.Module):
 
 class TargetGenerationModel(nn.Module):
     def __init__(self,
-                 batch_size:int,
-                 lr:float,
                  mirna_max_len:int,
-                 mrna_max_len:int, 
+                 mrna_max_len:int,
+                 lr:float=1e-4,
+                 batch_size:int=32,
                  vocab_size:int=13, # 8 special tokens + 5 bases
                  num_layers:int=2, 
                  embed_dim:int=256, 
@@ -1080,6 +1080,7 @@ class TargetGenerationModel(nn.Module):
         self.lr = lr
         self.seed = seed
         self.ff_dim = ff_dim
+        self.num_heads = num_heads
         self.mrna_max_len = mrna_max_len
         self.mirna_max_len = mirna_max_len
         self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
@@ -1105,6 +1106,14 @@ class TargetGenerationModel(nn.Module):
             hidden_sizes=hidden_sizes,
             output_size=n_classes,
             dropout=dropout_rate)
+        
+        self.tokenizer = CharacterTokenizer(characters=["A", "T", "C", "G", "N"],
+                            add_special_tokens=False, 
+                            model_max_length=self.mrna_max_len-2, # minus 2 for BOS and EOS tokens
+                            padding_side="right")
+        self.pad_idx = self.tokenizer.convert_tokens_to_ids("[PAD]")
+        self.bos_idx = self.tokenizer.convert_tokens_to_ids("[BOS]")
+        self.eos_idx = self.tokenizer.convert_tokens_to_ids("[EOS]")
 
     def forward(self,
                 mirna,
@@ -1437,19 +1446,12 @@ class TargetGenerationModel(nn.Module):
             finetune=False,
             accumulation_step=1,
             epochs=1,):
-        tokenizer = CharacterTokenizer(characters=["A", "T", "C", "G", "N"],
-                            add_special_tokens=False, 
-                            model_max_length=self.mrna_max_len-2, # minus 2 for BOS and EOS tokens
-                            padding_side="right")
-        self.pad_idx = tokenizer.convert_tokens_to_ids("[PAD]")
-        self.bos_idx = tokenizer.convert_tokens_to_ids("[BOS]")
-        self.eos_idx = tokenizer.convert_tokens_to_ids("[EOS]")
         if predict:
             D_test  = load_dataset(test_path, sep='\t')
             ds_test = TargetPredictionDataset(data=D_test,
                                     mrna_max_len=self.mrna_max_len,
                                     mirna_max_len=self.mirna_max_len,
-                                    tokenizer=tokenizer,)
+                                    tokenizer=self.tokenizer,)
             test_loader = DataLoader(ds_test, 
                                 batch_size=self.batch_size, 
                                 shuffle=False)
@@ -1484,7 +1486,7 @@ class TargetGenerationModel(nn.Module):
                 # Decode
                 for i in range(generated.size(0)):
                     seq_ids = generated[i].tolist()
-                    decoded = tokenizer.decode(seq_ids, skip_special_tokens=True)
+                    decoded = self.tokenizer.decode(seq_ids, skip_special_tokens=True)
                     all_generated_seqs.append(decoded)
 
             D_test["generated_mirna"] = all_generated_seqs
@@ -1513,11 +1515,11 @@ class TargetGenerationModel(nn.Module):
             ds_train = TargetPredictionDataset(data=D_train,
                                             mrna_max_len=self.mrna_max_len,
                                             mirna_max_len=self.mirna_max_len,
-                                            tokenizer=tokenizer,)
+                                            tokenizer=self.tokenizer,)
             ds_val = TargetPredictionDataset(data=D_val,
                                     mrna_max_len=self.mrna_max_len,
                                     mirna_max_len=self.mirna_max_len,
-                                    tokenizer=tokenizer,)
+                                    tokenizer=self.tokenizer,)
             train_loader = DataLoader(ds_train, 
                                 batch_size=self.batch_size, 
                                 shuffle=True)
