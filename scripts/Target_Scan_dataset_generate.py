@@ -214,88 +214,88 @@ print(f"Maximum mRNA length = {max_len}.")
 
 
 # assemble negative pairs
-# print("Putting together negative samples: ")
-# start_time = time.time()
-# seg_len = window_len
-# print(f"Segment length = {seg_len}")
-# negative_samples = []
-# max_length = 0
+print("Putting together negative samples: ")
+start_time = time.time()
+seg_len = window_len
+print(f"Segment length = {seg_len}")
+negative_samples = []
+max_length = 0
 
-# with open(os.path.join(data_dir, f"mouse_negative_samples_{str(window_len)}.csv"), "w", newline="") as f:
-#     writer = csv.DictWriter(f, fieldnames=["Transcript ID", 
-#                                            "miRNA ID", 
-#                                            "miRNA sequence", 
-#                                            "mRNA sequence", 
-#                                            "coords",
-#                                            "label"], delimiter="\t")
-#     writer.writeheader()
-#     for negative_pair in negative_pairs:
-#         miRNA_ID       = negative_pair.get("miRNA", "")
-#         tran_id        = negative_pair.get("Transcript_ID", "")
-#         if miRNA_ID: 
-#             miRNA_seq  = miRNA_df.loc[miRNA_df["MiRBase ID"] == miRNA_ID, "Mature sequence"]
-#             miRNA_seq  = miRNA_seq.values[0]
-#         if tran_id:
-#             mRNA_seq = mRNA_df.loc[(mRNA_df["Transcript ID"] == tran_id), "mRNA sequence"]
-#             if len(mRNA_seq) > 0:    
-#                 mRNA_seq = mRNA_seq.values[0]
-#                 # randomly select seg_len-nt mRNA segment
-#                 if len(mRNA_seq) < seg_len:
-#                     if not check_complementarity(miRNA=miRNA_seq, mRNA=mRNA_seq):
-#                         writer.writerow({
-#                                         "Transcript ID":  tran_id,
-#                                         "miRNA ID":       miRNA_ID,
-#                                         "miRNA sequence": miRNA_seq,
-#                                         "mRNA sequence":  mRNA_seq,
-#                                         "coords":         -1,
-#                                         "label":          0
-#                                         })
-#                         max_length = max(max_length, len(mRNA_seq))
-#                         continue
-#                 else:
-#                     start    = random.randint(0, len(mRNA_seq)-seg_len)
-#                     end      = min(start + seg_len, len(mRNA_seq))
-#                     mRNA_seg = mRNA_seq[start:end]
-#                     match    = check_complementarity(miRNA_seq, mRNA_seg)
-#                     if match:
-#                         print("Found complementarity in negative samples, re-sampling mRNA segment...")
-#                         possible_starts    = len(mRNA_seq) - seg_len + 1
-#                         n_samples_per_pair = 10
-#                         max_tries          = min(n_samples_per_pair, possible_starts) # choose between N samples or max possible segments per sample
-#                         tried_starts       = set()
+with open(os.path.join(data_dir, f"mouse_negative_samples_{str(window_len)}.csv"), "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=["Transcript ID", 
+                                           "miRNA ID", 
+                                           "miRNA sequence", 
+                                           "mRNA sequence", 
+                                           "coords",
+                                           "label"], delimiter="\t")
+    writer.writeheader()
+    for negative_pair in negative_pairs:
+        miRNA_ID       = negative_pair.get("miRNA", "")
+        tran_id        = negative_pair.get("Transcript_ID", "")
+        if miRNA_ID: 
+            miRNA_seq  = miRNA_df.loc[miRNA_df["MiRBase ID"] == miRNA_ID, "Mature sequence"]
+            miRNA_seq  = miRNA_seq.values[0]
+        if tran_id:
+            mRNA_seq = mRNA_df.loc[(mRNA_df["Transcript ID"] == tran_id), "mRNA sequence"]
+            if len(mRNA_seq) > 0:    
+                mRNA_seq = mRNA_seq.values[0]
+                # randomly select seg_len-nt mRNA segment
+                if len(mRNA_seq) < seg_len:
+                    if not check_complementarity(miRNA=miRNA_seq, mRNA=mRNA_seq):
+                        writer.writerow({
+                                        "Transcript ID":  tran_id,
+                                        "miRNA ID":       miRNA_ID,
+                                        "miRNA sequence": miRNA_seq,
+                                        "mRNA sequence":  mRNA_seq,
+                                        "coords":         -1,
+                                        "label":          0
+                                        })
+                        max_length = max(max_length, len(mRNA_seq))
+                        continue
+                else:
+                    start    = random.randint(0, len(mRNA_seq)-seg_len)
+                    end      = min(start + seg_len, len(mRNA_seq))
+                    mRNA_seg = mRNA_seq[start:end]
+                    match    = check_complementarity(miRNA_seq, mRNA_seg)
+                    if match:
+                        print("Found complementarity in negative samples, re-sampling mRNA segment...")
+                        possible_starts    = len(mRNA_seq) - seg_len + 1
+                        n_samples_per_pair = 10
+                        max_tries          = min(n_samples_per_pair, possible_starts) # choose between N samples or max possible segments per sample
+                        tried_starts       = set()
 
-#                         while len(tried_starts) < max_tries:
-#                             start = random.randint(0, possible_starts - 1)
-#                             if start in tried_starts:
-#                                 # Already tried this start; draw again
-#                                 continue
-#                             tried_starts.add(start)
-#                             end = start + seg_len
-#                             mRNA_seg = mRNA_seq[start:end]
-#                             if not check_complementarity(miRNA_seq, mRNA_seg):
-#                                 writer.writerow({
-#                                     "Transcript ID":    tran_id,
-#                                     "miRNA ID":         miRNA_ID,
-#                                     "miRNA sequence":   miRNA_seq,
-#                                     "mRNA sequence":    mRNA_seg,
-#                                     "coords":           -1,
-#                                     "label":            0
-#                                 })
-#                     else:
-#                         writer.writerow({ 
-#                                         "Transcript ID":    tran_id,
-#                                         "miRNA ID":         miRNA_ID,
-#                                         "miRNA sequence":   miRNA_seq,
-#                                         "mRNA sequence":    mRNA_seg,
-#                                         "coords":           -1,
-#                                         "label":            0
-#                                         })
-#                     max_length = max(max_length, len(mRNA_seg))    
-#             else:
-#                 print(f"Cannot find mRNA seq: [{tran_id}].", flush=True)
+                        while len(tried_starts) < max_tries:
+                            start = random.randint(0, possible_starts - 1)
+                            if start in tried_starts:
+                                # Already tried this start; draw again
+                                continue
+                            tried_starts.add(start)
+                            end = start + seg_len
+                            mRNA_seg = mRNA_seq[start:end]
+                            if not check_complementarity(miRNA_seq, mRNA_seg):
+                                writer.writerow({
+                                    "Transcript ID":    tran_id,
+                                    "miRNA ID":         miRNA_ID,
+                                    "miRNA sequence":   miRNA_seq,
+                                    "mRNA sequence":    mRNA_seg,
+                                    "coords":           -1,
+                                    "label":            0
+                                })
+                    else:
+                        writer.writerow({ 
+                                        "Transcript ID":    tran_id,
+                                        "miRNA ID":         miRNA_ID,
+                                        "miRNA sequence":   miRNA_seq,
+                                        "mRNA sequence":    mRNA_seg,
+                                        "coords":           -1,
+                                        "label":            0
+                                        })
+                    max_length = max(max_length, len(mRNA_seg))    
+            else:
+                print(f"Cannot find mRNA seq: [{tran_id}].", flush=True)
 
-# print("Maximum mRNA length = ", max_length)
-# print(f"Time taken for putting together negative samples = {(time.time() - start_time)/60} min")
+print("Maximum mRNA length = ", max_length)
+print(f"Time taken for putting together negative samples = {(time.time() - start_time)/60} min")
 
 positive_human_samples = pd.read_csv(os.path.join(data_dir, f"human_positive_samples_{str(window_len)}_randomized_start.csv"), sep='\t')
 negative_human_samples = pd.read_csv(os.path.join(data_dir, f"human_negative_samples_{str(window_len)}.csv"), sep='\t')

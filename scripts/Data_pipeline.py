@@ -523,3 +523,71 @@ class TokenClassificationDataset(torch.utils.data.Dataset):
             lab = lab + [-100] * (self.mrna_max_len - len(lab))
         return lab           
         
+class TargetPredictionDataset(torch.utils.data.Dataset):
+    def __init__(self,
+                 data,
+                 mrna_max_len,
+                 mirna_max_len,
+                 tokenizer,
+                 mRNA_col="mRNA sequence",
+                 miRNA_col="miRNA sequence",):
+        self.data = data
+        self.mrna_max_len = mrna_max_len
+        self.mirna_max_len = mirna_max_len
+        self.tokenizer = tokenizer
+        self.mRNA_col = mRNA_col
+        self.miRNA_col = miRNA_col
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        bos = self.tokenizer.convert_tokens_to_ids("[BOS]")
+        eos = self.tokenizer.convert_tokens_to_ids("[EOS]")
+        pad = self.tokenizer.convert_tokens_to_ids("[PAD]")
+
+        mrna_seq = self.data[self.mRNA_col].iat[idx]
+        mirna_seq = self.data[self.miRNA_col].iat[idx]
+
+        # Tokenize mirna
+        mirna_seq = mirna_seq.replace("U", "T")
+        mirna_seq = mirna_seq[::-1]
+        mirna_encoded = self.tokenizer(
+            mirna_seq,
+            add_special_tokens=False,
+            padding=False, # we will handle padding later
+            truncation=True,
+            max_length=self.mirna_max_len - 2, 
+        )
+        assert pad not in mirna_encoded["input_ids"], "Tokenizer unexpectedly padded even though padding=False"
+        mirna_encoded["input_ids"] = [bos] + mirna_encoded["input_ids"] + [eos]
+        # pad to fixed length
+        if len(mirna_encoded["input_ids"]) < self.mirna_max_len:
+            mirna_encoded["input_ids"] = mirna_encoded["input_ids"] + [pad] * (self.mirna_max_len - len(mirna_encoded["input_ids"]))
+        else:
+            mirna_encoded["input_ids"] = mirna_encoded["input_ids"][:self.mirna_max_len]
+
+        # Tokenize mrna
+        mrna_encoded = self.tokenizer(
+            mrna_seq,
+            add_special_tokens=False,
+            padding=False, # we will handle padding later
+            truncation=True,
+            max_length=self.mrna_max_len - 1,  
+        )
+        assert pad not in mrna_encoded["input_ids"], "Tokenizer unexpectedly padded even though padding=False"
+        mrna_encoded["input_ids"] = mrna_encoded["input_ids"] + [eos]
+
+        # pad to fixed length
+        if len(mrna_encoded["input_ids"]) < self.mrna_max_len:
+            mrna_encoded["input_ids"] = mrna_encoded["input_ids"] + [pad] * (self.mrna_max_len - len(mrna_encoded["input_ids"]))
+        else:
+            mrna_encoded["input_ids"] = mrna_encoded["input_ids"][:self.mrna_max_len]
+    
+        mirna_ids = torch.tensor(mirna_encoded["input_ids"], dtype=torch.long)
+        mrna_ids = torch.tensor(mrna_encoded["input_ids"], dtype=torch.long)
+
+        return {
+            "mirna_input_ids": mirna_ids,
+            "mrna_input_ids": mrna_ids
+        }

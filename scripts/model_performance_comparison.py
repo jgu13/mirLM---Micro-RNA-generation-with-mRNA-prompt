@@ -11,7 +11,7 @@ from Global_parameters import PROJ_HOME, AXIS_FONT_SIZE, TICK_FONT_SIZE, TITLE_F
 gill_sans_font = font_manager.FontProperties(family='Gill Sans')
 plt.rcParams['font.family'] = gill_sans_font.get_name()
 
-Performance_dir = os.path.join(os.path.expanduser("~/projects/mirLM"),
+Performance_dir = os.path.join(PROJ_HOME,
                                "Performance/TargetScan_test")
 os.makedirs(Performance_dir, exist_ok=True)
 
@@ -26,9 +26,9 @@ df = pd.read_csv(csv_path)
 # ======================
 colors = {
     "MiRformer": "#FF9F1C",   # orange
-    "TargetScan": "#5BC999",  # greenish
     "REPRESS": "#63CFEF",     # cyan
-    "miTAR": "#A267F2"        # purple
+    "miTAR": "#A267F2",        # purple
+    "Mimosa": "#54E3AF"        # green
 }
 
 # ======================
@@ -134,14 +134,14 @@ def _plot_axis(ax, df, models, metric, title,
     #                    ha='right')
     # remove x ticks
     ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
-    ax.tick_params(axis='y', labelsize=TICK_LABEL_FONTSIZE-2)
+    ax.tick_params(axis='y', labelsize=TICK_FONT_SIZE-2)
     values = sub[metric].to_numpy(dtype=float)
     ax.grid(axis='y', linestyle='--', alpha=0.35)
     ax.margins(y=0.3)
 
     # Use `title` text on the y-axis instead of as a subplot title
     if show_ylabel:
-        ax.set_ylabel(title, fontsize=AXIS_LABEL_FONTSIZE-2)
+        ax.set_ylabel(title, fontsize=AXIS_FONT_SIZE-2)
     else:
         ax.set_ylabel("")
 
@@ -151,22 +151,22 @@ def _plot_axis(ax, df, models, metric, title,
 # ======================
 # Panels (per your spec)
 # ======================
-p1_models = ["MiRformer", "TargetScan", "REPRESS", "miTAR"]
+p1_models = ["MiRformer", "REPRESS", "miTAR", "Mimosa"]
 p1_metric = "Binding Accuracy"
 
-p2_models = ["MiRformer", "REPRESS", "miTAR"]
+p2_models = ["MiRformer", "REPRESS", "miTAR", "Mimosa"]
 p2_metric = "Seed Span AUROC"
 
-p3_models = ["MiRformer", "REPRESS", "miTAR"]
+p3_models = ["MiRformer", "REPRESS", "miTAR", "Mimosa"]
 p3_metric = "Seed Span AUPRC"
 
-p4_models = ["MiRformer", "REPRESS", "miTAR"]
+p4_models = ["MiRformer", "REPRESS", "miTAR", "Mimosa"]
 p4_metric = "Hit at 5"
 
-p5_models = ["MiRformer", "REPRESS", "miTAR"]
+p5_models = ["MiRformer", "REPRESS", "miTAR", "Mimosa"]
 p5_metric = "Hit at 3"
 
-p6_models = ["MiRformer", "REPRESS", "miTAR"]
+p6_models = ["MiRformer", "REPRESS", "miTAR", "Mimosa"]
 p6_metric = "Hit at 0"
 
 all_model_lists = [p1_models, p2_models, p3_models, p4_models, p5_models, p6_models]
@@ -174,8 +174,8 @@ n_max_models = max(len(m) for m in all_model_lists)  # here: 4
 
 # 2 rows x 3 columns, width fits A4 with 1" margins
 fig, axes = plt.subplots(
-    2, 3,
-    figsize=(21/2.54, 15/2.54),
+    3, 2,
+    figsize=(15/2.54, 21/2.54),
     dpi=500,
 )
 
@@ -224,7 +224,7 @@ fig.legend(handles, labels,
     bbox_to_anchor=(0.85, 1.05),
     ncol=len(labels),
     frameon=False,
-    fontsize=LEGEND_FONTSIZE-2,
+    fontsize=LEGEND_FONT_SIZE-2,
     borderaxespad=0.5)
 
 fig.tight_layout(rect=[0, 0.12, 1, 1])
