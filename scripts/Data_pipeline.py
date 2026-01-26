@@ -542,9 +542,11 @@ class TargetPredictionDataset(torch.utils.data.Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        bos = self.tokenizer.convert_tokens_to_ids("[BOS]")
-        eos = self.tokenizer.convert_tokens_to_ids("[EOS]")
-        pad = self.tokenizer.convert_tokens_to_ids("[PAD]")
+        # NOTE: CharacterTokenizer defines eos_token as "[SEP]" (id=1) and does NOT have "[EOS]".
+        # Using "[EOS]" would map to [UNK] and silently break generation stop conditions.
+        bos = self.tokenizer.bos_token_id
+        eos = self.tokenizer.eos_token_id
+        pad = self.tokenizer.pad_token_id
 
         mrna_seq = self.data[self.mRNA_col].iat[idx]
         mirna_seq = self.data[self.miRNA_col].iat[idx]
