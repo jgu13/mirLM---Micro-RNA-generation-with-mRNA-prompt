@@ -31,7 +31,7 @@ def compute_accuracy(df: pd.DataFrame) -> tuple[dict[str, float], list[float]]:
     for _, row in df.iterrows():
         ref_seq = _clean_sequence(row.get(MIRNA_SEQ_COL, ""))
         gen_seq = _clean_sequence(row.get(GENERATED_SEQ_COL, ""))
-        gen_seq = gen_seq[::-1] # because the generated miRNA is reversed
+        gen_seq = gen_seq[::-1] # because the generated miRNA is reversed (3' to 5')
         if not ref_seq or not gen_seq:
             continue
 
@@ -77,70 +77,84 @@ def compute_accuracy(df: pd.DataFrame) -> tuple[dict[str, float], list[float]]:
     return metrics, [acc for acc in per_seed_accuracy if not math.isnan(acc)]
 
 
-def plot_accuracy(metrics1: dict[str, float], metrics2: dict[str, float], color1: str, color2: str) -> None:
+def plot_accuracy(metrics: list[dict[str, float]], model_names: list[str], colors: dict[str, str]) -> None:
     """
     Plot the accuracy of the predicted miRNA seed and non-seed.
     """
     categories = ["Overall", "Seed", "Non-seed"]
-    # Ensure values are in the correct order, default to 0 if missing
-    values1 = [metrics1.get(cat, 0.0) for cat in categories]
-    values2 = [metrics2.get(cat, 0.0) for cat in categories]
-    
+    n_models = len(metrics)
+    fig, ax = plt.subplots(figsize=(2 * n_models, 4))
+    width = 0.5 * (1/n_models)
     x = np.arange(len(categories))
-    width = 0.35
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    # Without CNN
-    ax.bar(x - width/2, values1, width, color=color1, label="Full Cross Attention")
-    # With CNN
-    ax.bar(x + width/2, values2, width, color=color2, label="Sliding Window Cross Attention")
+    color_list = list(colors.values())
+    for i, (metric, model_name, color) in enumerate(zip(metrics, model_names, color_list)):
+        values = [metric.get(cat, 0.0) for cat in categories]
+        bars = ax.bar(x + i * width, values, width, color=color, label=model_name)
+        # Add value labels on top of each bar.
+        for rect, val in zip(bars, values):
+            ax.text(
+                rect.get_x() + rect.get_width() / 2,
+                rect.get_height() + 0.01,
+                f"{val:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                rotation=90,
+            )
     
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0, 1)
-    ax.set_title("Predicted miRNA seed vs non-seed Accuracy (randomized start validation)")
+    ax.set_title("Predicted miRNA seed vs non-seed Accuracy")
     ax.set_xticks(x)
     ax.set_xticklabels(categories)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
     ax.legend()
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "520", "generated_seed_and_non_seed_accuracy_500_randomized_start_validation_mini_full_and_cross_attn_comparison.png")
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "generated_seed_and_non_seed_accuracy_mrna_length_comparison3.png")
     # save the figure to the project home
     fig.savefig(save_path)
     print(f"Figure saved to {save_path}")
 
-def plot_per_seed_accuracy(per_seed_accuracy1: list[float], per_seed_accuracy2: list[float], color1: str, color2: str) -> None:
-    plt.figure(figsize=(4, 4))
+def plot_per_seed_accuracy(per_seed_accuracies: list[list[float]], model_names: list[str], colors: dict[str, str]) -> None:
+    plt.figure(figsize=(2 * len(model_names), 4))
     # plot boxplot of per_seed_accuracy with per-group colors
     bp = plt.boxplot(
-        [per_seed_accuracy1, per_seed_accuracy2],
-        tick_labels=["Full Cross Attention", "Sliding Window Cross Attention"],
+        per_seed_accuracies,
+        tick_labels=model_names,
         patch_artist=True,  # allows filled boxes
         boxprops=dict(linewidth=1.2),
         whiskerprops=dict(linewidth=1.2),
         capprops=dict(linewidth=1.2),
         medianprops=dict(color="black", linewidth=1.4),
     )
-    for patch, c in zip(bp["boxes"], [color1, color2]):
+    for patch, c in zip(bp["boxes"], colors.values()):
         patch.set_facecolor(c)
         patch.set_edgecolor("black")
-    plt.xticks(fontsize=6)
+    plt.xticks(fontsize=6, rotation=20)
     plt.ylabel("Accuracy")
     plt.title("Predicted miRNA\naverage per-seed accuracy")
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "520", "generated_mirna_average_per_seed_accuracy_500_randomized_start_validation_mini_full_and_cross_attn_comparison.png")
+    plt.gcf().subplots_adjust(bottom=0.25)
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "generated_mirna_average_per_seed_accuracy_mrna_length_comparison2.png")
     plt.savefig(save_path)
     print(f"Figure saved to {save_path}")
 
 def main() -> None:
-    DATASET_PATH1 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_primates_validation_500_randomized_start_mini_norm_by_key.csv")
-    DATASET_PATH2 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_primates_validation_500_randomized_start_mini_cross_attn_norm_by_key.csv")
+    DATASET_PATH1 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
+    DATASET_PATH2 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_primates_test_100_randomized_start_local_self_attn_full_cross_attn.csv")
+    DATASET_PATH3 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_primates_test_500_randomized_start_local_self_attn_full_cross_attn.csv")
     
     dataframe1 = pd.read_csv(DATASET_PATH1)
     dataframe2 = pd.read_csv(DATASET_PATH2)
+    dataframe3 = pd.read_csv(DATASET_PATH3)
     metrics1, per_seed_accuracy1 = compute_accuracy(dataframe1)
     metrics2, per_seed_accuracy2 = compute_accuracy(dataframe2)
-    if not metrics1 or not metrics2:
-        raise RuntimeError("No valid miRNA / generated_mirna pairs were found.")
-    plot_accuracy(metrics1, metrics2, color1="#A1A9AD", color2="#F07FDD")
-    plot_per_seed_accuracy(per_seed_accuracy1, per_seed_accuracy2, color1="#A1A9AD", color2="#F07FDD")
+    metrics3, per_seed_accuracy3 = compute_accuracy(dataframe3)
+
+    plot_accuracy([metrics1, metrics2, metrics3], 
+                ["30nt", "100nt", "500nt"], 
+                {"color1":"#FAB796", "color2": "#87CEBF", "color3": "#A1A9AD"})
+    # plot_per_seed_accuracy([per_seed_accuracy1, per_seed_accuracy2, per_seed_accuracy3], 
+                # ["30nt", "100nt", "500nt"], 
+                # {"color1":"#FAB796", "color2": "#87CEBF", "color3": "#A1A9AD"})
 
 
 if __name__ == "__main__":

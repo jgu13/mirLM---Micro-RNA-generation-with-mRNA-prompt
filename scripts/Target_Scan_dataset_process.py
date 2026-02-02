@@ -5,24 +5,23 @@ import random
 import gzip
 import pandas as pd
 import numpy as np
+from Global_parameters import PROJ_HOME
 # from Bio import SeqIO
 # from sklearn.model_selection import train_test_split
 
-# PROJ_HOME = os.path.expanduser("~/projects/mirLM")
-# PROJ_HOME = os.path.expanduser("/Users/jiayaogu/Documents/Li Lab/mirLM---Micro-RNA-generation-with-mRNA-prompt/")
-PROJ_HOME = os.path.expanduser("/home/claris/projects/ctb-liyue/claris/projects/mirLM")
+
 data_dir = os.path.join(PROJ_HOME, "TargetScan_dataset")
 predicted_targets_f = "Mouse_Predicted_Targets_Context_Scores.default_predictions.txt.zip"
 
 # positive miRNA and mRNA pairs
 path = os.path.join(data_dir, predicted_targets_f)
 predicted_targets = pd.read_csv(path, sep='\t', compression="zip")
-# filter for human (9606), chimpanzee (9598), mouse (10090)
+# filter for human (9606), mouse (10090)
 tax_ids = [10090]
 top_predicted_targets = predicted_targets[
     predicted_targets["Gene Tax ID"].isin(tax_ids) 
-    # &
-    # (predicted_targets["context++ score percentile"] >= np.int64(80)) # top 20% likely pairs
+    &
+    (predicted_targets["context++ score percentile"] >= np.int64(80)) # top 20% likely pairs
     ]
 # filter out non-canonical sites
 top_predicted_targets = top_predicted_targets.loc[~top_predicted_targets["Site Type"].isin([-2,-3])]
@@ -33,25 +32,29 @@ positive_pairs = top_predicted_targets[[
      "UTR_start",
      "UTR end"
 ]]
-positive_pairs.columns = ["miRNA", "Transcript_ID", "UTR_start", "UTR_end"]
-positive_pairs = positive_pairs.drop_duplicates(subset=["Transcript_ID", "miRNA", "UTR_start", "UTR_end"])
-# Build a single column that already holds the coordinate pair 
-positive_pairs["coords"] = list(zip(positive_pairs["UTR_start"], positive_pairs["UTR_end"]))
-# Group & aggregate into lists of tuples 
-positive_pairs = (positive_pairs
-               .groupby(["Transcript_ID", "miRNA"])["coords"]
-               .apply(list)                 # → list of tuples
-               .reset_index(name="UTR_coords"))
-positive_pairs.loc[:, "label"] = 1
-positive_pairs.to_csv(os.path.join(data_dir, "Positive_pairs_mouse_all.csv"), sep='\t', index=False)
 
+# uncomment to construct a single column that holds the coordinate pairs
+# positive_pairs.columns = ["miRNA", "Transcript_ID", "UTR_start", "UTR_end"]
+# positive_pairs = positive_pairs.drop_duplicates(subset=["Transcript_ID", "miRNA", "UTR_start", "UTR_end"])
+# # Build a single column that already holds the coordinate pair 
+# positive_pairs["coords"] = list(zip(positive_pairs["UTR_start"], positive_pairs["UTR_end"]))
+# # Group & aggregate into lists of tuples 
+# positive_pairs = (positive_pairs
+#                .groupby(["Transcript_ID", "miRNA"])["coords"]
+#                .apply(list)                 # → list of tuples
+#                .reset_index(name="UTR_coords"))
+
+positive_pairs.loc[:, "label"] = 1
+positive_pairs.columns = ["miRNA", "Transcript_ID", "UTR_start", "UTR_end", "label"]
+positive_pairs.to_csv(os.path.join(data_dir, "Positive_pairs_mouse.csv"), sep='\t', index=False)
 print("Total predicted mirna-transcript pairs = ", len(positive_pairs))
+print("Positive pairs saved to ", os.path.join(data_dir, "Positive_pairs_mouse.csv"))
 
 # negative miRNA and mRNA pairs: select mRNA species that is not in positive pairs with the miRNA
 all_mrnas       = set(predicted_targets["Transcript ID"].unique())
 print("Start generating an equal number of negative samples.")
 with open(os.path.join(data_dir, "negative_pairs_mouse.csv"), "w", newline="") as f:
-    writer = csv.DictWriter(f, fieldnames=["miRNA", "Transcript_ID", "coords", "label"], delimiter="\t")
+    writer = csv.DictWriter(f, fieldnames=["miRNA", "Transcript_ID", "UTR_start", "UTR_end", "label"], delimiter="\t")
     writer.writeheader()
     for mirna, group in positive_pairs.groupby("miRNA"):
         pos_set       = set(group['Transcript_ID'].tolist())
@@ -64,7 +67,8 @@ with open(os.path.join(data_dir, "negative_pairs_mouse.csv"), "w", newline="") a
             writer.writerow(
                 {"miRNA":        mirna,
                 "Transcript_ID": mrna,
-                "coords":        -1,
+                "UTR_start":     -1,
+                "UTR_end":       -1,
                 "label":         0}
             )
 
@@ -87,7 +91,7 @@ out_path = os.path.join(data_dir, "negative_pairs_mouse.csv")
 with open(out_path, "a", newline="") as f:
     writer = csv.DictWriter(
         f,
-        fieldnames=["miRNA", "Transcript_ID", "coords","label"],
+        fieldnames=["miRNA", "Transcript_ID", "UTR_start", "UTR_end", "label"],
         delimiter="\t"
     )
     # don't write header, just append rows
@@ -95,7 +99,8 @@ with open(out_path, "a", newline="") as f:
         writer.writerow({
             "miRNA":         row["miRNA"],
             "Transcript_ID": row["Transcript ID"],
-            "coords":        -1,
+            "UTR_start":     -1,
+            "UTR_end":       -1,
             "label":         0
         })
 

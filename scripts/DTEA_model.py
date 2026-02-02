@@ -96,7 +96,8 @@ class LongformerAttention(nn.Module):
                 attention_mode="sliding_chunks", 
                 dropout=0.2,
                 device='cuda',
-                cross_attn=False):
+                cross_attn=False,
+                norm_by_query=False):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -104,7 +105,7 @@ class LongformerAttention(nn.Module):
         assert (
             self.head_dim * num_heads == embed_dim
         ), "Embedding dimension must be divisible by number of heads"
-
+        self.norm_by_query = norm_by_query
         self.query = nn.Linear(embed_dim, embed_dim)
         self.key   = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
@@ -185,7 +186,7 @@ class LongformerAttention(nn.Module):
                 Q=q, K=k, V=v, 
                 w=self.attention_window, 
                 mask=mask, 
-                norm_by_query=True,
+                norm_by_query=self.norm_by_query,
                 use_lse=True,)    # (B, H, L_q, D)
             
             # Reshape to final output format
@@ -589,79 +590,43 @@ class TransformerDecoderLayer(nn.Module):
                 max_seq_len=10000, 
                 dropout=0.1, 
                 device='cuda', 
-                tgt_mask=None, 
-                use_longformer=False):
+                tgt_mask=None):
         super(TransformerDecoderLayer, self).__init__()
-        self.use_longformer = use_longformer
         self.self_attn = MultiHeadAttention(embed_dim=embed_dim, 
                                             num_heads=num_heads, 
                                             device=device,
                                             max_seq_len=max_seq_len,
                                             cross_attn=False,)
-        if use_longformer:
-            self.cross_attn = LongformerAttention(embed_dim=embed_dim, 
-                                                 num_heads=num_heads, 
-                                                 window_size=window_size, 
-                                                 autoregressive=False,
-                                                 layer_id=None,
-                                                 # RoPE is applied to both Q (tgt) and K (src) in cross-attn,
-                                                 # so set max_seq_len large enough (e.g., mrna_max_len).
-                                                 max_seq_len=max_seq_len,
-                                                 dropout=dropout, 
-                                                 device=device,
-                                                 cross_attn=True)
-        else:
-            self.cross_attn = MultiHeadAttention(embed_dim=embed_dim, 
-                                                 num_heads=num_heads, 
-                                                 device=device,
-                                                 cross_attn=True,
-                                                 max_seq_len=max_seq_len,)
+        self.cross_attn = MultiHeadAttention(embed_dim=embed_dim, 
+                                            num_heads=num_heads, 
+                                            device=device,
+                                            cross_attn=True,
+                                            max_seq_len=max_seq_len,)
         self.feed_forward = FeedForward(embed_dim, ff_dim)
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
         self.norm3 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, memory, src_mask=None, tgt_mask=None, tgt_query_mask=None):
+    def forward(self, x, memory, src_mask=None, tgt_mask=None):
         attn_output = self.self_attn(x, x, x, mask=tgt_mask)
         x = self.norm1(x + self.dropout(attn_output))
-        if isinstance(self.cross_attn, LongformerAttention):
-            # Longformer cross-attn expects:
-            # - attention_mask: (B, Lk) with {0,1} or bool (1/True = valid key)
-            # - query_attention_mask: (B, Lq) with {0,1} or bool (1/True = valid query)
-            if src_mask is not None:
-                if src_mask.dim() == 3 and src_mask.shape[1] == 1:
-                    key_mask = src_mask.squeeze(1)
-                elif src_mask.dim() == 2:
-                    key_mask = src_mask
-                else:
-                    raise ValueError(f"src_mask must be (B,Lk) or (B,1,Lk) for Longformer cross-attn, got {tuple(src_mask.shape)}")
-            else:
-                key_mask = None
-
-            if tgt_query_mask is not None:
-                if tgt_query_mask.dim() != 2:
-                    raise ValueError(f"tgt_query_mask must be (B,Lq), got {tuple(tgt_query_mask.shape)}")
-                query_mask = tgt_query_mask
-            else:
-                query_mask = None
-
-            cross_attn_output = self.cross_attn(
-                query=x,
-                key=memory,
-                value=memory,
-                attention_mask=key_mask,
-                query_attention_mask=query_mask,
-            )[0]
-        else:
-            cross_attn_output = self.cross_attn(x, memory, memory, mask=src_mask)
+        cross_attn_output = self.cross_attn(x, memory, memory, mask=src_mask)
         x = self.norm2(x + self.dropout(cross_attn_output))
         ff_output = self.feed_forward(x)
         x = self.norm3(x + self.dropout(ff_output))
         return x
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, num_layers, embed_dim, num_heads, ff_dim, window_size=20, max_seq_len=10000, dropout=0.1, device='cuda', use_longformer=False):
+    def __init__(self, 
+                 num_layers, 
+                 embed_dim, 
+                 num_heads, 
+                 ff_dim, 
+                 window_size=20, 
+                 max_seq_len=10000, 
+                 dropout=0.1, 
+                 device='cuda'):
         super(TransformerDecoder, self).__init__()
         self.layers = nn.ModuleList(
             [TransformerDecoderLayer(embed_dim=embed_dim, 
@@ -670,15 +635,14 @@ class TransformerDecoder(nn.Module):
                                      window_size=window_size,
                                      max_seq_len=max_seq_len,
                                      dropout=dropout, 
-                                     device=device,
-                                     use_longformer=use_longformer) for _ in range(num_layers)]
+                                     device=device) for _ in range(num_layers)]
         )
         self.norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, memory, src_mask=None, tgt_mask=None, tgt_query_mask=None):
+    def forward(self, x, memory, src_mask=None, tgt_mask=None):
         for layer in self.layers:
-            x = layer(x, memory, src_mask, tgt_mask, tgt_query_mask=tgt_query_mask)
+            x = layer(x, memory, src_mask, tgt_mask)
         x = self.norm(x)
         x = self.dropout(x)
         return x
@@ -1990,10 +1954,9 @@ class TargetGenerationModel(nn.Module):
             ff_dim=ff_dim, 
             window_size=window_size,
             # Use mrna_max_len so RoPE buffers cover cross-attn keys (mRNA length).
-            max_seq_len=mrna_max_len, 
+            max_seq_len=mirna_max_len, 
             dropout=dropout_rate, 
-            device=device,
-            use_longformer=use_longformer)
+            device=device,)
         self.predictor_head = LinearHead(
             input_size=embed_dim, 
             hidden_sizes=hidden_sizes,
@@ -2014,8 +1977,7 @@ class TargetGenerationModel(nn.Module):
                 mirna,
                 mrna,
                 mrna_mask,
-                mirna_mask,
-                tgt_query_mask=None,):
+                mirna_mask,):
         mrna_sn_embedding = self.sn_embedding(mrna)
         mirna_sn_embedding = self.sn_embedding(mirna)
 
@@ -2050,7 +2012,6 @@ class TargetGenerationModel(nn.Module):
                 memory=mrna_embedding,
                 src_mask=src_key_mask,
                 tgt_mask=mirna_mask,
-                tgt_query_mask=tgt_query_mask,
             )
             next_token_logits = self.predictor_head(mirna_embedding)
         else:
@@ -2060,7 +2021,6 @@ class TargetGenerationModel(nn.Module):
                 memory=mrna_embedding,
                 src_mask=mrna_mask,
                 tgt_mask=mirna_mask,
-                tgt_query_mask=tgt_query_mask,
             )
             next_token_logits = self.predictor_head(mirna_embedding)
         return next_token_logits
@@ -2091,7 +2051,6 @@ class TargetGenerationModel(nn.Module):
         - padding mask (PAD tokens shouldn't be attended to)
         Returns:
           - tgt_mask: (B, L_tgt, L_tgt) uint8 mask for self-attn
-          - tgt_query_mask: (B, L_tgt) uint8 mask for cross-attn query masking
         """
         B, L_tgt = tgt_input.size()
 
@@ -2099,14 +2058,14 @@ class TargetGenerationModel(nn.Module):
         causal = self.generate_square_subsequent_mask(L_tgt, device=tgt_input.device)
 
         # padding: (B, L_tgt, 1) broadcast to (B, L_tgt, L_tgt)
-        tgt_query_mask = (tgt_input != self.pad_idx).to(torch.uint8)  # (B, L_tgt)
-        non_pad = tgt_query_mask.unsqueeze(1)                    # (B, 1, L_tgt)
-        non_pad = non_pad.repeat(1, L_tgt, 1)                  # (B, L_tgt, L_tgt)
+        non_pad = (tgt_input != self.pad_idx).to(torch.uint8)  # (B, L_tgt)
+        non_pad = non_pad.unsqueeze(1)     # (B, 1, L_tgt)
+        non_pad = non_pad.repeat(1, L_tgt, 1) # (B, L_tgt, L_tgt)
 
         # combine: valid if both not masked by causal and not PAD
         # causal: (1, L, L) -> (B, L, L) by broadcasting
         tgt_mask = causal & non_pad  # uint8 AND
-        return tgt_mask, tgt_query_mask
+        return tgt_mask
 
     def train_loop(self,
                    model,
@@ -2130,22 +2089,21 @@ class TargetGenerationModel(nn.Module):
             src_input = mrna_input # (B, L_mrna)
 
             # 2) Masks
-            src_mask = self.create_src_mask(mrna_input).to(device)           # (B, L_mrna)
-            tgt_mask, tgt_query_mask = self.create_tgt_mask(tgt_input)       # (B, L_tgt, L_tgt), (B, L_tgt)
+            src_mask = self.create_src_mask(mrna_input).to(device)   # (B, L_mrna)
+            tgt_mask = self.create_tgt_mask(tgt_input)   # (B, L_tgt, L_tgt)
             tgt_mask = tgt_mask.to(device)
-            tgt_query_mask = tgt_query_mask.to(device)
 
             logits = model(
                 mirna=tgt_input,
                 mrna=src_input,
                 mrna_mask=src_mask,
                 mirna_mask=tgt_mask,
-                tgt_query_mask=tgt_query_mask,
             )  # (B, L_mirna-1, n_classes)
             B, L, V = logits.size()
             loss = loss_fn(
                 logits.view(B*L, V), 
-                tgt_output.reshape(B*L,)) # (B*L, )
+                tgt_output.reshape(B*L,)
+            ) # (B*L, )
 
             loss = loss / accumulation_step 
             loss.backward()
@@ -2204,10 +2162,9 @@ class TargetGenerationModel(nn.Module):
                 src_input = mrna_input # (B, L_mrna)
 
                 # 2) Masks
-                src_mask = self.create_src_mask(src_input).to(device)         # (B, L_mrna)
-                tgt_mask, tgt_query_mask = self.create_tgt_mask(tgt_input)     # (B, L_tgt, L_tgt), (B, L_tgt)
+                src_mask = self.create_src_mask(src_input).to(device)     # (B, L_mrna)
+                tgt_mask = self.create_tgt_mask(tgt_input)     # (B, L_tgt, L_tgt)
                 tgt_mask = tgt_mask.to(device)
-                tgt_query_mask = tgt_query_mask.to(device)
 
                 # 3) Forward pass
                 logits = model(
@@ -2215,7 +2172,6 @@ class TargetGenerationModel(nn.Module):
                     mrna=src_input,
                     mrna_mask=src_mask,
                     mirna_mask=tgt_mask,
-                    tgt_query_mask=tgt_query_mask,
                 )  # (B, L_mirna-1, n_classes)
                 B, L, V = logits.size()
                 valid_mask = (tgt_output != self.pad_idx)
@@ -2289,9 +2245,8 @@ class TargetGenerationModel(nn.Module):
             finished = torch.zeros(batch_size, dtype=torch.bool, device=model.device)
             for _ in range(max_len):
                 tgt_input = generated
-                tgt_mask, tgt_query_mask = self.create_tgt_mask(tgt_input)
+                tgt_mask = self.create_tgt_mask(tgt_input)
                 tgt_mask = tgt_mask.to(model.device)
-                tgt_query_mask = tgt_query_mask.to(model.device)
 
                 mirna_sn_embedding = model.sn_embedding(tgt_input)
                 tgt_embedding = mirna_sn_embedding
@@ -2301,7 +2256,7 @@ class TargetGenerationModel(nn.Module):
                 #     out = model.mirna_decoder(x=tgt_embedding, memory=memory, src_mask=lf_mask, tgt_mask=tgt_mask)
                 # else:
                     
-                out = model.mirna_decoder(x=tgt_embedding, memory=memory, src_mask=mrna_mask, tgt_mask=tgt_mask, tgt_query_mask=tgt_query_mask)    
+                out = model.mirna_decoder(x=tgt_embedding, memory=memory, src_mask=mrna_mask, tgt_mask=tgt_mask)    
                 logits = model.predictor_head(out)
                 
                 # Only last position logits used for next token
@@ -2460,7 +2415,7 @@ class TargetGenerationModel(nn.Module):
                     all_generated_seqs.append(decoded)
 
             D_test["generated_mirna"] = all_generated_seqs
-            save_path = os.path.join(os.path.dirname(test_path), "generated_mirna_positive_primates_validation_500_randomized_start_mini_cross_attn_norm_by_query.csv")
+            save_path = os.path.join(os.path.dirname(test_path), f"generated_mirna_positive_samples_30_randomized_start_test.csv")
             D_test.to_csv(save_path, index=False)
             print(f"Generated mirna saved to {save_path}")
         else:
@@ -2474,7 +2429,7 @@ class TargetGenerationModel(nn.Module):
                     "epochs": epochs,
                     "learning rate": self.lr,
                 },
-                tags=["finetune", "norm-by-query", "best_composite_0.9312_0.9975_epoch19"],
+                tags=["finetune", "longformer", "best_composite_0.9312_0.9975_epoch19"],
                 save_code=False,
                 job_type="train"
             )
@@ -2522,7 +2477,7 @@ class TargetGenerationModel(nn.Module):
                 "Longformer",
                 "TargetGeneration",
                 str(self.mrna_max_len),
-                "norm_by_query",
+                "full_cross_attn"
             )
             os.makedirs(model_checkpoints_dir, exist_ok=True)
             for epoch in range(epochs):
@@ -2557,27 +2512,27 @@ class TargetGenerationModel(nn.Module):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 520
+    mrna_max_len = 30
     mirna_max_len = 24 + 2
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_train_500_randomized_start.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_validation_500_randomized_start.csv")
-    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_validation_500_randomized_start_mini.csv")
-    ckpt_path = os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/Longformer/TargetGeneration/520/norm_by_query/best_token_accuracy_0.9999_epoch0.pth")
+    test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_randomized_start_test.csv")
+    ckpt_path = os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/TargetGeneration/30/best_token_accuracy_0.9554_epoch19.pth")
 
     # train target generation model
     model = TargetGenerationModel(mrna_max_len=mrna_max_len,
                                   mirna_max_len=mirna_max_len,
-                                  device='cuda:0',
+                                  device='cuda:1',
                                   embed_dim=1024,
                                   num_heads=8,
                                   num_layers=4,
                                   ff_dim=4096,
-                                  batch_size=32,
+                                  batch_size=64,
                                   vocab_size=13,
                                   n_classes=13,
                                   lr=3e-5,
                                   seed=10020,
-                                  use_longformer=True)
+                                  use_longformer=False,)
     model.run(model=model,
               train_path=train_datapath,
               valid_path=valid_datapath,
@@ -2585,7 +2540,7 @@ if __name__ == "__main__":
               evaluation=False,
               predict=True,
               finetune=False,
-              accumulation_step=8,
+              accumulation_step=4,
               epochs=20,
               ckpt_path=ckpt_path,)
     
