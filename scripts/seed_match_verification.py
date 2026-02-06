@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-from Global_parameters import PROJ_HOME
+from Global_parameters import PROJ_HOME, TICK_FONT_SIZE, AXIS_FONT_SIZE, TITLE_FONT_SIZE, LEGEND_FONT_SIZE
 
 def get_complement(seq):
     """Returns the Watson-Crick complement of a sequence (DNA/RNA)."""
@@ -67,31 +67,37 @@ def plot_seed_match_distribution(data, plot_path):
     eight_mers_perc = data_perc.loc["8-mer"].tolist()
 
     # Plotting Raw Counts
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    set2 = plt.get_cmap("Set2").colors
+    bar_colors = [set2[0], set2[1], set2[2], set2[3]]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
 
     # Subplot 1: Raw Counts
-    ax1.bar(lengths, six_mers, label='6-mer')
-    ax1.bar(lengths, seven_a1, bottom=six_mers, label='7-mer-A1')
-    ax1.bar(lengths, seven_m8, bottom=np.asarray(six_mers)+np.asarray(seven_a1), label='7-mer-m8')
-    ax1.bar(lengths, eight_mers, bottom=np.asarray(six_mers)+np.asarray(seven_a1)+np.asarray(seven_m8), label='8-mer')
+    ax1.bar(lengths, six_mers, label='6-mer', color=bar_colors[0])
+    ax1.bar(lengths, seven_a1, bottom=six_mers, label='7-mer-A1', color=bar_colors[1])
+    ax1.bar(lengths, seven_m8, bottom=np.asarray(six_mers)+np.asarray(seven_a1), label='7-mer-m8', color=bar_colors[2])
+    ax1.bar(lengths, eight_mers, bottom=np.asarray(six_mers)+np.asarray(seven_a1)+np.asarray(seven_m8), label='8-mer', color=bar_colors[3])
 
-    ax1.set_ylabel('Number of Matches')
-    ax1.set_title('Seed Match Counts by mRNA Length')
-    ax1.legend()
+    ax1.set_title("Seed Match Counts", fontsize=TITLE_FONT_SIZE)
+    ax1.legend(fontsize=LEGEND_FONT_SIZE)
+    ax1.tick_params(axis='both', which='major', labelsize=TICK_FONT_SIZE)
+    ax1.set_xlabel("mRNA length", fontsize=AXIS_FONT_SIZE)
+    ax1.set_ylabel("Number of Matches", fontsize=AXIS_FONT_SIZE)
 
     # Subplot 2: Percentages (100% Stacked)
-    ax2.bar(lengths, six_mers_perc, label='6-mer')
-    ax2.bar(lengths, seven_a1_perc, bottom=six_mers_perc, label='7-mer-A1')
-    ax2.bar(lengths, seven_m8_perc, bottom=np.asarray(six_mers_perc)+np.asarray(seven_a1_perc), label='7-mer-m8')
-    ax2.bar(lengths, eight_mers_perc, bottom=np.asarray(six_mers_perc)+np.asarray(seven_a1_perc)+np.asarray(seven_m8_perc), label='8-mer')
+    ax2.bar(lengths, six_mers_perc, label='6-mer', color=bar_colors[0])
+    ax2.bar(lengths, seven_a1_perc, bottom=six_mers_perc, label='7-mer-A1', color=bar_colors[1])
+    ax2.bar(lengths, seven_m8_perc, bottom=np.asarray(six_mers_perc)+np.asarray(seven_a1_perc), label='7-mer-m8', color=bar_colors[2])
+    ax2.bar(lengths, eight_mers_perc, bottom=np.asarray(six_mers_perc)+np.asarray(seven_a1_perc)+np.asarray(seven_m8_perc), label='8-mer', color=bar_colors[3])
 
-    ax2.set_ylabel('Percentage (%)')
-    ax2.set_title('Seed Match Distribution (%) by mRNA Length')
+    ax2.set_ylabel("Percentage (%)", fontsize=AXIS_FONT_SIZE)
+    ax2.set_title("Seed Match Distribution (%)", fontsize=TITLE_FONT_SIZE)
     ax2.set_ylim(0, 100)
-    ax2.legend()
+    ax2.legend(fontsize=LEGEND_FONT_SIZE)
+    ax2.tick_params(axis='both', which='major', labelsize=TICK_FONT_SIZE)
+    ax2.set_xlabel("mRNA length", fontsize=AXIS_FONT_SIZE)
 
     # save the plots
-    fig.savefig(plot_path)
+    fig.savefig(plot_path, dpi=400, bbox_inches="tight")
     print("Seed match distribution plot saved to: ", plot_path)
 
 print("Plots saved successfully.")
@@ -99,7 +105,7 @@ print("Plots saved successfully.")
 if __name__ == "__main__":
     # read in the dataset
     data_dir = os.path.join(PROJ_HOME, "TargetScan_dataset")
-    data_30nt = os.path.join(data_dir, "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
+    data_30nt = os.path.join(data_dir, "generated_mirna_positive_samples_30_randomized_start_test.csv")
     data_100nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_100_randomized_start_local_self_attn_full_cross_attn.csv")
     data_500nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_500_randomized_start_local_self_attn_full_cross_attn.csv")
     data_30nt = pd.read_csv(data_30nt)
@@ -217,5 +223,5 @@ if __name__ == "__main__":
     # Normalized Data for 100% stacked bar chart
     # This helps in comparing the distribution of match types across different mRNA lengths
     data = pd.DataFrame(np.array([six_mers, seven_a1, seven_m8, eight_mers]), columns=lengths, index=seed_types)
-    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution.png")
+    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution.svg")
     plot_seed_match_distribution(data, plot_path)

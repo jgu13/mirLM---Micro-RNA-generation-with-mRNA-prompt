@@ -174,8 +174,8 @@ n_max_models = max(len(m) for m in all_model_lists)  # here: 4
 
 # 2 rows x 3 columns, width fits A4 with 1" margins
 fig, axes = plt.subplots(
-    3, 2,
-    figsize=(15/2.54, 21/2.54),
+    2, 3,
+    figsize=(18/2.54, 12/2.54),
     dpi=500,
 )
 
@@ -229,7 +229,7 @@ fig.legend(handles, labels,
 
 fig.tight_layout(rect=[0, 0.12, 1, 1])
 
-save_path = os.path.join(Performance_dir, "model_comparison_combined.png")
+save_path = os.path.join(Performance_dir, "model_comparison_combined_horizontal.png")
 plt.savefig(save_path, dpi=500, bbox_inches="tight")
 plt.close(fig)
 print(f"Combined figure saved to: {save_path}")

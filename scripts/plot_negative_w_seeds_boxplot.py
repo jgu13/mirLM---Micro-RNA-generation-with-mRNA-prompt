@@ -86,6 +86,10 @@ ax.spines['right'].set_visible(False)
 ax.spines['bottom'].set_visible(False)
 ax.spines['left'].set_visible(False)
 
+ymin, ymax = ax.get_ylim()
+if ymax != ymin:
+    ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.1)
+
 def log_p_two_sided(u, n1, n2):
     mean = n1 * n2 / 2
     std = mp.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)

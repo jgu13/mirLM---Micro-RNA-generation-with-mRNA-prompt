@@ -6,7 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 import pandas as pd
-from Global_parameters import PROJ_HOME
+from scipy.stats import mannwhitneyu, ttest_ind
+from Global_parameters import PROJ_HOME, AXIS_FONT_SIZE, TICK_FONT_SIZE, TITLE_FONT_SIZE, LEGEND_FONT_SIZE
+import mpmath as mp
 
 
 SEED_START_COL = "seed start"
@@ -83,7 +85,7 @@ def plot_accuracy(metrics: list[dict[str, float]], model_names: list[str], color
     """
     categories = ["Overall", "Seed", "Non-seed"]
     n_models = len(metrics)
-    fig, ax = plt.subplots(figsize=(2 * n_models, 4))
+    fig, ax = plt.subplots(figsize=(2 * n_models, 3))
     width = 0.5 * (1/n_models)
     x = np.arange(len(categories))
     color_list = list(colors.values())
@@ -104,18 +106,18 @@ def plot_accuracy(metrics: list[dict[str, float]], model_names: list[str], color
     
     ax.set_ylabel("Accuracy")
     ax.set_ylim(0, 1)
-    ax.set_title("Predicted miRNA seed vs non-seed Accuracy")
+    ax.set_title("Predicted miRNA seed vs non-seed accuracy")
     ax.set_xticks(x)
     ax.set_xticklabels(categories)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.legend()
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "generated_seed_and_non_seed_accuracy_mrna_length_comparison3.png")
+    ax.legend(loc=(1.0, 0.8), fontsize=LEGEND_FONT_SIZE-2, frameon=False)
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "generated_seed_and_non_seed_accuracy_mrna_length_comparison.svg")
     # save the figure to the project home
-    fig.savefig(save_path)
+    fig.savefig(save_path, dpi=400, bbox_inches="tight")
     print(f"Figure saved to {save_path}")
 
 def plot_per_seed_accuracy(per_seed_accuracies: list[list[float]], model_names: list[str], colors: dict[str, str]) -> None:
-    plt.figure(figsize=(2 * len(model_names), 4))
+    plt.figure(figsize=(len(model_names), 3))
     # plot boxplot of per_seed_accuracy with per-group colors
     bp = plt.boxplot(
         per_seed_accuracies,
@@ -129,16 +131,15 @@ def plot_per_seed_accuracy(per_seed_accuracies: list[list[float]], model_names: 
     for patch, c in zip(bp["boxes"], colors.values()):
         patch.set_facecolor(c)
         patch.set_edgecolor("black")
-    plt.xticks(fontsize=6, rotation=20)
+    plt.xticks([])
     plt.ylabel("Accuracy")
     plt.title("Predicted miRNA\naverage per-seed accuracy")
-    plt.gcf().subplots_adjust(bottom=0.25)
-    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "generated_mirna_average_per_seed_accuracy_mrna_length_comparison2.png")
-    plt.savefig(save_path)
+    save_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "generated_mirna_average_per_seed_accuracy_mrna_length_comparison.svg")
+    plt.savefig(save_path, dpi=400, bbox_inches="tight")
     print(f"Figure saved to {save_path}")
 
 def main() -> None:
-    DATASET_PATH1 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_randomized_start_validation_random_samples.csv")
+    DATASET_PATH1 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_samples_30_randomized_start_test.csv")
     DATASET_PATH2 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_primates_test_100_randomized_start_local_self_attn_full_cross_attn.csv")
     DATASET_PATH3 = os.path.join(PROJ_HOME, "TargetScan_dataset", "generated_mirna_positive_primates_test_500_randomized_start_local_self_attn_full_cross_attn.csv")
     
@@ -150,12 +151,16 @@ def main() -> None:
     metrics3, per_seed_accuracy3 = compute_accuracy(dataframe3)
 
     plot_accuracy([metrics1, metrics2, metrics3], 
-                ["30nt", "100nt", "500nt"], 
+                ["30 nt", "100 nt", "500 nt"], 
                 {"color1":"#FAB796", "color2": "#87CEBF", "color3": "#A1A9AD"})
-    # plot_per_seed_accuracy([per_seed_accuracy1, per_seed_accuracy2, per_seed_accuracy3], 
-                # ["30nt", "100nt", "500nt"], 
-                # {"color1":"#FAB796", "color2": "#87CEBF", "color3": "#A1A9AD"})
+    plot_per_seed_accuracy([per_seed_accuracy1, per_seed_accuracy2, per_seed_accuracy3], 
+                ["30 nt", "100 nt", "500 nt"], 
+                {"color1":"#FAB796", "color2": "#87CEBF", "color3": "#A1A9AD"})
 
+    # # do mann-whitney u-test between per_seed_accuracy1 and per_seed_accuracy2
+    # result = mannwhitneyu(np.log10(per_seed_accuracy1), np.log10(per_seed_accuracy2), alternative="two-sided", method="asymptotic")
+    # print(f"Mann-Whitney u-test statistic: {result.statistic}")
+    # print(f"Mann-Whitney u-test p-value: {mp.nstr(result.pvalue, 4)}")
 
 if __name__ == "__main__":
     main()

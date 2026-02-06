@@ -78,7 +78,15 @@ def plot_metric(
     ax.set_xlabel("Step", fontsize=AXIS_FONT_SIZE)
     ax.set_ylabel(title, fontsize=AXIS_FONT_SIZE)
     ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
+    add_top_margin(ax)
     return lines
+
+
+def add_top_margin(ax: plt.Axes, fraction: float = 0.1) -> None:
+    ymin, ymax = ax.get_ylim()
+    if ymax == ymin:
+        return
+    ax.set_ylim(ymin, ymax + (ymax - ymin) * fraction)
 
 
 def last_step_values(df: pd.DataFrame) -> pd.Series:
@@ -157,18 +165,18 @@ fig.legend(
     list(legend_handles.values()),
     list(legend_handles.keys()),
     loc="lower center",
-    ncol=min(2, len(metric_columns)),
+    ncol=1,
     fontsize=LEGEND_FONT_SIZE,
 )
 output_dir = os.path.join(PROJ_HOME, "Performance/TargetScan_test")
 os.makedirs(output_dir, exist_ok=True)
 
-output_path = os.path.join(output_dir, "Pooling_Method_comparison_lineplot.svg")
-fig.savefig(output_path, dpi=500)
-print(f"Saved plot to {output_path}")
+# output_path = os.path.join(output_dir, "Pooling_Method_comparison_lineplot.svg")
+# fig.savefig(output_path, dpi=500)
+# print(f"Saved plot to {output_path}")
 
 # --- Bar plots (last step for each metric) ---
-bar_fig, bar_axes = plt.subplots(2, 2, figsize=(30/2.54, 23.87/2.54), sharex=False)
+bar_fig, bar_axes = plt.subplots(2, 2, figsize=(30/2.54, 26.87/2.54), sharex=False)
 bar_axes_iter: Iterable[Tuple[str, plt.Axes]] = zip(metric_data.keys(), bar_axes.flatten())
 
 for metric_name, ax in bar_axes_iter:
@@ -177,7 +185,7 @@ for metric_name, ax in bar_axes_iter:
     y = values.values
     bar_colors = [metric_colors.get(name, (0.2, 0.2, 0.2, 1.0)) for name in x_labels]
 
-    ax.bar(x_labels, y, color=bar_colors)
+    bar_container = ax.bar(x_labels, y, color=bar_colors)
     ax.set_facecolor("whitesmoke")
     ax.tick_params(axis="both", which="major", labelsize=TICK_FONT_SIZE)
     ax.set_ylabel(metric_name, fontsize=AXIS_FONT_SIZE)
@@ -185,14 +193,26 @@ for metric_name, ax in bar_axes_iter:
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.7)
     # no x axis tick labels
     ax.set_xticks([])
+    for rect, value in zip(bar_container, y):
+        ax.annotate(
+            f"{value:.3f}",
+            xy=(rect.get_x() + rect.get_width() / 2, rect.get_height()),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=TICK_FONT_SIZE,
+        )
+    add_top_margin(ax)
 
-bar_fig.tight_layout(rect=(0, 0.13, 1, 1))
+
+bar_fig.tight_layout(rect=(0, 0.23, 1, 1))
 legend_patches = [mpatches.Patch(color=metric_colors[name], label=name) for name in metric_columns]
 bar_fig.legend(
     handles=legend_patches,
     labels=[p.get_label() for p in legend_patches],
     loc="lower center",
-    ncol=min(2, len(metric_columns)),
+    ncol=1,
     fontsize=LEGEND_FONT_SIZE+2,
 )
 
