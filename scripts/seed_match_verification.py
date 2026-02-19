@@ -223,5 +223,5 @@ if __name__ == "__main__":
     # Normalized Data for 100% stacked bar chart
     # This helps in comparing the distribution of match types across different mRNA lengths
     data = pd.DataFrame(np.array([six_mers, seven_a1, seven_m8, eight_mers]), columns=lengths, index=seed_types)
-    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution.svg")
+    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution_after_perturbation.svg")
     plot_seed_match_distribution(data, plot_path)

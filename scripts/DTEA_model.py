@@ -2512,7 +2512,7 @@ class TargetGenerationModel(nn.Module):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 30
+    mrna_max_len = 120 
     mirna_max_len = 24 + 2
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_train_500_randomized_start.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_validation_500_randomized_start.csv")
@@ -2532,7 +2532,7 @@ if __name__ == "__main__":
                                   n_classes=13,
                                   lr=3e-5,
                                   seed=10020,
-                                  use_longformer=False,)
+                                  use_longformer=True,)
     model.run(model=model,
               train_path=train_datapath,
               valid_path=valid_datapath,
