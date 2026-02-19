@@ -105,9 +105,9 @@ print("Plots saved successfully.")
 if __name__ == "__main__":
     # read in the dataset
     data_dir = os.path.join(PROJ_HOME, "TargetScan_dataset")
-    data_30nt = os.path.join(data_dir, "generated_mirna_positive_samples_30_randomized_start_test.csv")
-    data_100nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_100_randomized_start_local_self_attn_full_cross_attn.csv")
-    data_500nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_500_randomized_start_local_self_attn_full_cross_attn.csv")
+    data_30nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_30_random_samples_validation.csv")
+    data_100nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_120_longformer_random_samples_validation.csv")
+    data_500nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_520_longformer_random_samples_validation.csv")
     data_30nt = pd.read_csv(data_30nt)
     data_100nt = pd.read_csv(data_100nt)
     data_500nt = pd.read_csv(data_500nt)
