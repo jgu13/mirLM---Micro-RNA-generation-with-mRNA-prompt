@@ -51,6 +51,72 @@ def verify_seed_matches(mrna_seq, mirna_seq):
 
     return False, None, -1
 
+def verify_anywhere_seed_matches(mrna_seq, mirna_seq):
+    """
+    Slides a window across the entire miRNA (5'→3') and checks whether the
+    reverse complement of each window appears in the mRNA, looking for the
+    strongest match type anywhere along the miRNA (not only at seed positions 2-8).
+
+    Match type priority (strongest to weakest):
+        8-mer    : RC of any 7-nt miRNA window + 'A' anchor found in mRNA
+        7-mer-m8 : RC of any 7-nt miRNA window found in mRNA
+        7-mer-A1 : RC of any 6-nt miRNA window + 'A' anchor found in mRNA
+        6-mer    : RC of any 6-nt miRNA window found in mRNA
+
+    Returns:
+        (found: bool,
+         match_type: str or None,
+         mirna_start: int,   # 0-based window start in the 5'→3' miRNA
+         mrna_pos: int)      # 0-based position in mRNA where match begins
+    """
+    # Convert stored 3'→5' representation to 5'→3'
+    mirna_fwd = mirna_seq[::-1]
+    mirna_len = len(mirna_fwd)
+
+    TYPE_PRIORITY = {"8-mer": 4, "7-mer-m8": 3, "7-mer-A1": 2, "6-mer": 1}
+    best_type      = None
+    best_priority  = 0
+    best_mirna_pos = -1
+    best_mrna_pos  = -1
+
+    for i in range(mirna_len):
+        # ── 7-nt window → 8-mer and 7-mer-m8 ──────────────────────────────
+        if i + 7 <= mirna_len:
+            rc_7 = get_complement(mirna_fwd[i:i+7])[::-1]
+
+            if TYPE_PRIORITY["8-mer"] > best_priority:
+                target = rc_7 + "A"
+                if target in mrna_seq:
+                    best_type, best_priority = "8-mer", TYPE_PRIORITY["8-mer"]
+                    best_mirna_pos, best_mrna_pos = i, mrna_seq.find(target)
+
+            if TYPE_PRIORITY["7-mer-m8"] > best_priority and rc_7 in mrna_seq:
+                best_type, best_priority = "7-mer-m8", TYPE_PRIORITY["7-mer-m8"]
+                best_mirna_pos, best_mrna_pos = i, mrna_seq.find(rc_7)
+
+        # ── 6-nt window → 7-mer-A1 and 6-mer ──────────────────────────────
+        if i + 6 <= mirna_len:
+            rc_6 = get_complement(mirna_fwd[i:i+6])[::-1]
+
+            if TYPE_PRIORITY["7-mer-A1"] > best_priority:
+                target = rc_6 + "A"
+                if target in mrna_seq:
+                    best_type, best_priority = "7-mer-A1", TYPE_PRIORITY["7-mer-A1"]
+                    best_mirna_pos, best_mrna_pos = i, mrna_seq.find(target)
+
+            if TYPE_PRIORITY["6-mer"] > best_priority and rc_6 in mrna_seq:
+                best_type, best_priority = "6-mer", TYPE_PRIORITY["6-mer"]
+                best_mirna_pos, best_mrna_pos = i, mrna_seq.find(rc_6)
+
+        # Early exit once the strongest possible match is found
+        if best_priority == TYPE_PRIORITY["8-mer"]:
+            break
+
+    if best_type is not None:
+        return True, best_type, best_mirna_pos, best_mrna_pos
+    return False, None, -1, -1
+
+
 def plot_seed_match_distribution(data, plot_path):
     # Normalized Data for 100% stacked bar chart
     # This helps in comparing the distribution of match types across different mRNA lengths
@@ -67,8 +133,8 @@ def plot_seed_match_distribution(data, plot_path):
     eight_mers_perc = data_perc.loc["8-mer"].tolist()
 
     # Plotting Raw Counts
-    set2 = plt.get_cmap("Set2").colors
-    bar_colors = [set2[0], set2[1], set2[2], set2[3]]
+    tab20b = plt.get_cmap("tab20b").colors
+    bar_colors = [tab20b[8], tab20b[9], tab20b[10], tab20b[11]]
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
 
     # Subplot 1: Raw Counts
@@ -105,9 +171,9 @@ print("Plots saved successfully.")
 if __name__ == "__main__":
     # read in the dataset
     data_dir = os.path.join(PROJ_HOME, "TargetScan_dataset")
-    data_30nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_30_random_samples_validation.csv")
-    data_100nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_120_longformer_random_samples_validation.csv")
-    data_500nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_520_longformer_random_samples_validation.csv")
+    data_30nt = os.path.join(data_dir, "generated_mirna_positive_samples_30_randomized_start_test.csv")
+    data_100nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_100_randomized_start_local_self_attn_full_cross_attn.csv")
+    data_500nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_500_randomized_start_local_self_attn_full_cross_attn.csv")
     data_30nt = pd.read_csv(data_30nt)
     data_100nt = pd.read_csv(data_100nt)
     data_500nt = pd.read_csv(data_500nt)
@@ -223,5 +289,5 @@ if __name__ == "__main__":
     # Normalized Data for 100% stacked bar chart
     # This helps in comparing the distribution of match types across different mRNA lengths
     data = pd.DataFrame(np.array([six_mers, seven_a1, seven_m8, eight_mers]), columns=lengths, index=seed_types)
-    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution_after_perturbation.svg")
+    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution.svg")
     plot_seed_match_distribution(data, plot_path)

@@ -28,11 +28,13 @@ Mimosa_dataset/
 scripts/__pycache__/
 
 # images
+plots/
 *.png
 *.svg
 
 # training data
 wandb/
+results/
 Pooling_Method_Binding_Accuracy.csv
 Pooling_Method_Exact_match_rate.csv
 Pooling_Method_F1_score.csv
@@ -43,5 +45,6 @@ build_dataset_output.txt
 dmiso_pairs.txt
 span_metrics.txt
 *.out
+*.md
 unused_data.tar.gz
 HyenaDNA_scripts/
