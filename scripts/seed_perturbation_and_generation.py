@@ -46,19 +46,19 @@ USE_LONGFORMER = True
 
 CKPT_PATH = os.path.join(
     PROJ_HOME,
-    "checkpoints/TargetScan/TwoTowerTransformer/Longformer/",
-    "TargetGeneration/120/full_cross_attn/best_token_accuracy_0.9552_epoch17.pth",
+    "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/TargetGeneration/",
+    "520/full_cross_attn/best_token_accuracy_0.9376_epoch18.pth",
 )
 
 INPUT_CSV = os.path.join(
     PROJ_HOME,
-    "TargetScan_dataset/Positive_primates_validation_100_randomized_start.csv",
+    "TargetScan_dataset/Positive_primates_test_500_randomized_start.csv",
 )
 
 OUTPUT_CSV = os.path.join(
     PROJ_HOME,
     "TargetScan_dataset"
-    "/generated_mirna_seed_perturbation_120_longformer_random_samples_validation.csv",
+    "/generated_mirna_seed_perturbation_520_longformer_random_samples_test.csv",
 )
 
 BASES = ["A", "T", "C", "G"]

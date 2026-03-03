@@ -23,6 +23,7 @@ optuna_logs/
 optuna_database/
 Non_canonical_sites/
 Mimosa_dataset/
+MiRTarBase_dataset/
 
 #cache
 scripts/__pycache__/
