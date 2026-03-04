@@ -134,7 +134,7 @@ def plot_seed_match_distribution(data, plot_path):
 
     # Plotting Raw Counts
     tab20b = plt.get_cmap("tab20b").colors
-    bar_colors = [tab20b[8], tab20b[9], tab20b[10], tab20b[11]]
+    bar_colors = [tab20b[0], tab20b[1], tab20b[2], tab20b[3]]
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
 
     # Subplot 1: Raw Counts
@@ -171,9 +171,9 @@ print("Plots saved successfully.")
 if __name__ == "__main__":
     # read in the dataset
     data_dir = os.path.join(PROJ_HOME, "TargetScan_dataset")
-    data_30nt = os.path.join(data_dir, "generated_mirna_positive_samples_30_randomized_start_test.csv")
-    data_100nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_100_randomized_start_local_self_attn_full_cross_attn.csv")
-    data_500nt = os.path.join(data_dir, "generated_mirna_positive_primates_test_500_randomized_start_local_self_attn_full_cross_attn.csv")
+    data_30nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_30_random_samples_test.csv")
+    data_100nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_120_longformer_random_samples_test.csv")
+    data_500nt = os.path.join(data_dir, "generated_mirna_seed_perturbation_520_longformer_random_samples_test.csv")
     data_30nt = pd.read_csv(data_30nt)
     data_100nt = pd.read_csv(data_100nt)
     data_500nt = pd.read_csv(data_500nt)
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     for index, row in data_30nt.iterrows():
         mrna_seq = row["mRNA sequence"]
         mirna_seq = row["generated_mirna"]
-        found, m_type, pos = verify_seed_matches(mrna_seq, mirna_seq)
+        found, m_type, _, _ = verify_anywhere_seed_matches(mrna_seq, mirna_seq)
         if found:
             if m_type == "6-mer":
                 valid_6mers_30nt += 1
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     for index, row in data_100nt.iterrows():
         mrna_seq = row["mRNA sequence"]
         mirna_seq = row["generated_mirna"]
-        found, m_type, pos = verify_seed_matches(mrna_seq, mirna_seq)
+        found, m_type, _,_ = verify_anywhere_seed_matches(mrna_seq, mirna_seq)
         if found:
             if m_type == "6-mer":
                 valid_6mers_100nt += 1
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     for index, row in data_500nt.iterrows():
         mrna_seq = row["mRNA sequence"]
         mirna_seq = row["generated_mirna"]
-        found, m_type, pos = verify_seed_matches(mrna_seq, mirna_seq)
+        found, m_type, _, _ = verify_anywhere_seed_matches(mrna_seq, mirna_seq)
         if found:
             if m_type == "6-mer":
                 valid_6mers_500nt += 1
@@ -289,5 +289,5 @@ if __name__ == "__main__":
     # Normalized Data for 100% stacked bar chart
     # This helps in comparing the distribution of match types across different mRNA lengths
     data = pd.DataFrame(np.array([six_mers, seven_a1, seven_m8, eight_mers]), columns=lengths, index=seed_types)
-    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution.svg")
+    plot_path = os.path.join(PROJ_HOME, "Performance", "TargetScan_test", "TwoTowerTransformer", "seed_match_distribution_anywhere_after_perturbation.svg")
     plot_seed_match_distribution(data, plot_path)

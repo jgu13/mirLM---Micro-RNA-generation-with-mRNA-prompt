@@ -9,6 +9,7 @@ TargetScan_dataset/
 Degradome_dataset/
 TarBase_dataset/
 miR_degradome_ago_clip_pairing_data/
+AGO2_eCLIP_Manakov2022_test.tsv.gz
 
 # logs
 output_logs/
