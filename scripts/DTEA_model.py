@@ -742,7 +742,7 @@ class CrossAttentionPredictor(nn.Module):
         # Create embedding table with correct size
         self.sn_embedding = nn.Embedding(vocab_size, embed_dim)
         self.cnn_embedding = CNNTokenization(embed_dim)
-        self.ln_merge = nn.LayerNorm(embed_dim)
+        # self.ln_merge = nn.LayerNorm(embed_dim)
         self.mirna_encoder = TransformerEncoder(
             num_layers=num_layers,
             embed_dim=embed_dim,
@@ -2512,62 +2512,62 @@ class TargetGenerationModel(nn.Module):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache() # clear crashed cache
-    mrna_max_len = 120 
-    mirna_max_len = 24 + 2
+    mrna_max_len = 520 
+    mirna_max_len = 24
     train_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_train_500_randomized_start.csv")
     valid_datapath = os.path.join(PROJ_HOME, "TargetScan_dataset/Positive_primates_validation_500_randomized_start.csv")
     test_datapath  = os.path.join(PROJ_HOME, "TargetScan_dataset/positive_samples_30_randomized_start_test.csv")
     ckpt_path = os.path.join(PROJ_HOME, "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/TargetGeneration/30/best_token_accuracy_0.9554_epoch19.pth")
 
     # train target generation model
-    model = TargetGenerationModel(mrna_max_len=mrna_max_len,
-                                  mirna_max_len=mirna_max_len,
-                                  device='cuda:1',
-                                  embed_dim=1024,
-                                  num_heads=8,
-                                  num_layers=4,
-                                  ff_dim=4096,
-                                  batch_size=64,
-                                  vocab_size=13,
-                                  n_classes=13,
-                                  lr=3e-5,
-                                  seed=10020,
-                                  use_longformer=True,)
-    model.run(model=model,
-              train_path=train_datapath,
-              valid_path=valid_datapath,
-              test_path =test_datapath,
-              evaluation=False,
-              predict=True,
-              finetune=False,
-              accumulation_step=4,
-              epochs=20,
-              ckpt_path=ckpt_path,)
-    
-
-    # model = DTEA(mrna_max_len=mrna_max_len,
-    #             mirna_max_len=mirna_max_len,
-    #             device="cuda:0",
-    #             epochs=100,
-    #             embed_dim=1024,
-    #             num_heads=8,
-    #             num_layers=4,
-    #             ff_dim=4096,
-    #             batch_size=32,
-    #             lr=3e-5,
-    #             seed=10020,
-    #             predict_span=False,
-    #             predict_binding=False,
-    #             predict_cleavage=True,
-    #             use_longformer=True)
-    # # total_params = sum(param.numel() for param in model.parameters())
-    # # print(f"Total Parameters: {total_params}")
-    # # trainable_params = [p for p in model.parameters() if p.requires_grad]
-    # # print(f"Total trainable parameters = ", len(trainable_params))
+    # model = TargetGenerationModel(mrna_max_len=mrna_max_len,
+    #                               mirna_max_len=mirna_max_len,
+    #                               device='cuda:1',
+    #                               embed_dim=1024,
+    #                               num_heads=8,
+    #                               num_layers=4,
+    #                               ff_dim=4096,
+    #                               batch_size=64,
+    #                               vocab_size=13,
+    #                               n_classes=13,
+    #                               lr=3e-5,
+    #                               seed=10020,
+    #                               use_longformer=True,)
     # model.run(model=model,
     #           train_path=train_datapath,
     #           valid_path=valid_datapath,
-    #           accumulation_step=8,
-    #           training_mode="SPAN",
-    #           ckpt_path=ckpt_path
-    #         )
+    #           test_path =test_datapath,
+    #           evaluation=False,
+    #           predict=True,
+    #           finetune=False,
+    #           accumulation_step=4,
+    #           epochs=20,
+    #           ckpt_path=ckpt_path,)
+    
+
+    model = DTEA(mrna_max_len=mrna_max_len,
+                mirna_max_len=mirna_max_len,
+                device="cuda:0",
+                epochs=100,
+                embed_dim=1024,
+                num_heads=8,
+                num_layers=4,
+                ff_dim=4096,
+                batch_size=32,
+                lr=3e-5,
+                seed=10020,
+                predict_span=False,
+                predict_binding=False,
+                predict_cleavage=True,
+                use_longformer=True)
+    # total_params = sum(param.numel() for param in model.parameters())
+    # print(f"Total Parameters: {total_params}")
+    # trainable_params = [p for p in model.parameters() if p.requires_grad]
+    # print(f"Total trainable parameters = ", len(trainable_params))
+    model.run(model=model,
+              train_path=train_datapath,
+              valid_path=valid_datapath,
+              accumulation_step=8,
+              training_mode="SPAN",
+              ckpt_path=ckpt_path
+            )
