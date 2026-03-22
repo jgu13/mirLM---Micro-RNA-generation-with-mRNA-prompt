@@ -196,19 +196,97 @@ def analyse_kmer_spectrum(mrna_seqs, labels, k=4):
 COLORS = {"pos": "#2166ac", "neg": "#b2182b"}
 
 
-def plot_seed_kmer(pos_6, neg_6, pos_7, neg_7, outpath):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    for ax, pos, neg, k in zip(axes, [pos_6, pos_7], [neg_6, neg_7], [6, 7]):
+RNG = np.random.default_rng(42)
+
+
+def fmt_pval(p: float) -> str:
+    """Format p-value: show '<2.2e-308' when it underflows to 0.0."""
+    if p == 0.0:
+        return "p < 2.2e-308"
+    return f"p = {p:.2e}"
+
+
+def subsample_pvalue(pos: np.ndarray, neg: np.ndarray,
+                     n_sub: int = 1000, n_reps: int = 100) -> tuple[float, float]:
+    """
+    Draw *n_sub* samples from each group *n_reps* times, run Mann-Whitney
+    each time, and return (median_p, mean_p).
+    """
+    pvals = []
+    for _ in range(n_reps):
+        p_idx = RNG.choice(len(pos), size=min(n_sub, len(pos)), replace=False)
+        n_idx = RNG.choice(len(neg), size=min(n_sub, len(neg)), replace=False)
+        _, p = stats.mannwhitneyu(pos[p_idx], neg[n_idx], alternative="two-sided")
+        pvals.append(p)
+    arr = np.array(pvals)
+    return float(np.median(arr)), float(np.mean(arr))
+
+
+def permutation_pvalue(pos: np.ndarray, neg: np.ndarray,
+                       n_sub: int = 2000, n_perm: int = 10000) -> float:
+    """
+    Permutation test on a subsample: shuffle labels *n_perm* times and
+    compute the fraction of permuted |Δmean| ≥ observed |Δmean|.
+    """
+    p_sub = pos[RNG.choice(len(pos), size=min(n_sub, len(pos)), replace=False)]
+    n_sub_arr = neg[RNG.choice(len(neg), size=min(n_sub, len(neg)), replace=False)]
+    combined = np.concatenate([p_sub, n_sub_arr])
+    n_p = len(p_sub)
+    obs_diff = abs(p_sub.mean() - n_sub_arr.mean())
+    count = 0
+    for _ in range(n_perm):
+        RNG.shuffle(combined)
+        perm_diff = abs(combined[:n_p].mean() - combined[n_p:].mean())
+        if perm_diff >= obs_diff:
+            count += 1
+    return (count + 1) / (n_perm + 1)  # +1 avoids exact-zero
+
+
+def overlap_coefficient(pos: np.ndarray, neg: np.ndarray, n_bins: int = 200) -> float:
+    """
+    Histogram-based overlap coefficient (OVL): the shared area under two
+    normalised histograms.  Returns value in [0, 1] where 1 = identical.
+    """
+    lo = min(pos.min(), neg.min())
+    hi = max(pos.max(), neg.max())
+    bins = np.linspace(lo, hi, n_bins + 1)
+    h_pos, _ = np.histogram(pos, bins=bins, density=True)
+    h_neg, _ = np.histogram(neg, bins=bins, density=True)
+    bin_width = bins[1] - bins[0]
+    return float(np.sum(np.minimum(h_pos, h_neg)) * bin_width)
+
+
+def robust_stats(pos: np.ndarray, neg: np.ndarray, name: str, logger) -> dict:
+    """Run all three statistical tests and log results. Returns dict for plot titles."""
+    med_p, mean_p = subsample_pvalue(pos, neg)
+    perm_p = permutation_pvalue(pos, neg)
+    ovl = overlap_coefficient(pos, neg)
+    effect = (abs(pos.mean() - neg.mean()) /
+              np.sqrt((pos.std()**2 + neg.std()**2) / 2)) if (pos.std() + neg.std()) > 0 else 0.0
+
+    logger.info("  [%s]  pos mean=%.4f±%.4f  neg mean=%.4f±%.4f",
+                name, pos.mean(), pos.std(), neg.mean(), neg.std())
+    logger.info("    Subsampled MWU (n=1000, 100 reps):  median p = %.4e,  mean p = %.4e",
+                med_p, mean_p)
+    logger.info("    Permutation test (n=2000, 10k perms): p = %.4e", perm_p)
+    logger.info("    Overlap coefficient (OVL):  %.4f", ovl)
+    logger.info("    Cohen's d:  %.4f", effect)
+    return {"med_p": med_p, "perm_p": perm_p, "ovl": ovl, "d": effect}
+
+
+def plot_seed_kmer(pos_6, neg_6, pos_7, neg_7, stats_6, stats_7, outpath):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    for ax, pos, neg, k, st in zip(axes, [pos_6, pos_7], [neg_6, neg_7],
+                                    [6, 7], [stats_6, stats_7]):
         max_val = max(pos.max(), neg.max())
         bins = np.arange(-0.5, max_val + 1.5, 1)
         ax.hist(pos, bins=bins, density=True, alpha=0.55, label=f"Positive (n={len(pos)})",
                 color=COLORS["pos"], edgecolor="white", linewidth=0.4)
         ax.hist(neg, bins=bins, density=True, alpha=0.55, label=f"Negative (n={len(neg)})",
                 color=COLORS["neg"], edgecolor="white", linewidth=0.4)
-        stat, pval = stats.mannwhitneyu(pos, neg, alternative="two-sided")
-        effect = abs(pos.mean() - neg.mean()) / np.sqrt((pos.std()**2 + neg.std()**2) / 2) if (pos.std() + neg.std()) > 0 else 0
         ax.set_title(f"{k}-mer seed-complement counts\n"
-                     f"Mann-Whitney p={pval:.2e}, Cohen's d={effect:.3f}", fontsize=11)
+                     f"Perm p={st['perm_p']:.2e}, OVL={st['ovl']:.3f}, "
+                     f"Cohen's d={st['d']:.3f}", fontsize=10)
         ax.set_xlabel(f"# seed-complement {k}-mer matches in mRNA")
         ax.set_ylabel("Density")
         ax.legend(fontsize=9)
@@ -218,8 +296,8 @@ def plot_seed_kmer(pos_6, neg_6, pos_7, neg_7, outpath):
     log.info("Saved seed k-mer plot → %s", outpath)
 
 
-def plot_gc_au(pos_gc, neg_gc, pos_au, neg_au, outpath):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+def plot_gc_au(pos_gc, neg_gc, pos_au, neg_au, gc_st, au_st, outpath):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
 
     # GC content
     ax = axes[0]
@@ -228,10 +306,9 @@ def plot_gc_au(pos_gc, neg_gc, pos_au, neg_au, outpath):
             color=COLORS["pos"], edgecolor="white", linewidth=0.4)
     ax.hist(neg_gc, bins=bins, density=True, alpha=0.55, label=f"Negative (n={len(neg_gc)})",
             color=COLORS["neg"], edgecolor="white", linewidth=0.4)
-    stat, pval = stats.mannwhitneyu(pos_gc, neg_gc, alternative="two-sided")
-    effect = abs(pos_gc.mean() - neg_gc.mean()) / np.sqrt((pos_gc.std()**2 + neg_gc.std()**2) / 2)
     ax.set_title(f"GC Content Distribution\n"
-                 f"Mann-Whitney p={pval:.2e}, Cohen's d={effect:.3f}", fontsize=11)
+                 f"Perm p={gc_st['perm_p']:.2e}, OVL={gc_st['ovl']:.3f}, "
+                 f"Cohen's d={gc_st['d']:.3f}", fontsize=10)
     ax.set_xlabel("GC fraction")
     ax.set_ylabel("Density")
     ax.legend(fontsize=9)
@@ -243,10 +320,9 @@ def plot_gc_au(pos_gc, neg_gc, pos_au, neg_au, outpath):
             color=COLORS["pos"], edgecolor="white", linewidth=0.4)
     ax.hist(neg_au, bins=bins_au, density=True, alpha=0.55, label=f"Negative (n={len(neg_au)})",
             color=COLORS["neg"], edgecolor="white", linewidth=0.4)
-    stat, pval = stats.mannwhitneyu(pos_au, neg_au, alternative="two-sided")
-    effect = abs(pos_au.mean() - neg_au.mean()) / np.sqrt((pos_au.std()**2 + neg_au.std()**2) / 2)
     ax.set_title(f"AU-rich Window Fraction (w=50, thr≥0.65)\n"
-                 f"Mann-Whitney p={pval:.2e}, Cohen's d={effect:.3f}", fontsize=11)
+                 f"Perm p={au_st['perm_p']:.2e}, OVL={au_st['ovl']:.3f}, "
+                 f"Cohen's d={au_st['d']:.3f}", fontsize=10)
     ax.set_xlabel("Fraction of AU-rich windows")
     ax.set_ylabel("Density")
     ax.legend(fontsize=9)
@@ -303,21 +379,18 @@ def main():
     log.info("=" * 60)
     log.info("Analysis 1: Seed-complementary k-mer counts")
     log.info("=" * 60)
+    seed_stats = {}
     for k in (6, 7):
         pos_k, neg_k = analyse_seed_kmer_counts(mirna_seqs, mrna_seqs, labels, k=k)
-        stat, pval = stats.mannwhitneyu(pos_k, neg_k, alternative="two-sided")
-        effect = (abs(pos_k.mean() - neg_k.mean()) /
-                  np.sqrt((pos_k.std()**2 + neg_k.std()**2) / 2)) if (pos_k.std() + neg_k.std()) > 0 else 0
-        log.info("[%d-mer]  pos mean=%.4f±%.4f  neg mean=%.4f±%.4f  "
-                 "MWU p=%.4e  Cohen's d=%.4f",
-                 k, pos_k.mean(), pos_k.std(), neg_k.mean(), neg_k.std(),
-                 pval, effect)
+        st = robust_stats(pos_k, neg_k, f"{k}-mer seed", log)
+        seed_stats[k] = st
         if k == 6:
             pos_6, neg_6 = pos_k, neg_k
         else:
             pos_7, neg_7 = pos_k, neg_k
 
     plot_seed_kmer(pos_6, neg_6, pos_7, neg_7,
+                   seed_stats[6], seed_stats[7],
                    os.path.join(RESULTS_DIR, "kmer_seed_match_distributions.png"))
 
     # ---- Analysis 2: GC content & AU-rich fraction ----
@@ -325,16 +398,10 @@ def main():
     log.info("Analysis 2: GC content & AU-rich fraction")
     log.info("=" * 60)
     pos_gc, neg_gc, pos_au, neg_au = analyse_gc_and_au(mrna_seqs, labels)
-    for name, pos_arr, neg_arr in [("GC content", pos_gc, neg_gc),
-                                    ("AU-rich frac", pos_au, neg_au)]:
-        stat, pval = stats.mannwhitneyu(pos_arr, neg_arr, alternative="two-sided")
-        effect = abs(pos_arr.mean() - neg_arr.mean()) / np.sqrt((pos_arr.std()**2 + neg_arr.std()**2) / 2)
-        log.info("[%s]  pos mean=%.4f±%.4f  neg mean=%.4f±%.4f  "
-                 "MWU p=%.4e  Cohen's d=%.4f",
-                 name, pos_arr.mean(), pos_arr.std(),
-                 neg_arr.mean(), neg_arr.std(), pval, effect)
+    gc_st = robust_stats(pos_gc, neg_gc, "GC content", log)
+    au_st = robust_stats(pos_au, neg_au, "AU-rich frac", log)
 
-    plot_gc_au(pos_gc, neg_gc, pos_au, neg_au,
+    plot_gc_au(pos_gc, neg_gc, pos_au, neg_au, gc_st, au_st,
                os.path.join(RESULTS_DIR, "gc_content_distributions.png"))
 
     # ---- Analysis 3: overall k-mer frequency spectrum (4-mer) ----

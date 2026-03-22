@@ -668,7 +668,7 @@ class BindingHead(nn.Module):
         x = s / self.tau
         m = x.max(dim=-1, keepdim=True).values
         lse = m + torch.log(torch.clamp(torch.exp(x - m).sum(dim=-1, keepdim=True), min=1e-20))
-        binding_logit = (lse * self.tau).squeeze(-1)             # (B,)
+        binding_logit = (lse * self.tau).squeeze(-1)  # (B,)
         w = torch.softmax(s / self.tau, dim=-1) * (mrna_mask > 0)
         w = w / (w.sum(dim=-1, keepdim=True) + 1e-9)
         return binding_logit, w

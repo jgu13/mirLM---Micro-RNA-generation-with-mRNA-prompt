@@ -391,11 +391,10 @@ class DiscriminatorTrainer:
                     f"  Epoch {epoch}\n"
                     f"  Train loss: {train_loss:.4f}\n"
                     f"  Val loss:   {m['loss']:.4f}\n"
-                    f"  Acc={m['accuracy']:.4f}  F1={m['f1']:.4f}  "
-                    f"Prec={m['precision']:.4f}  Rec={m['recall']:.4f}\n"
-                    f"  AUROC={m['auroc']:.4f}  AUPRC={m['auprc']:.4f}  "
-                    f"MCC={m['mcc']:.4f}\n"
-                    f"  TP={m['tp']}  TN={m['tn']}  FP={m['fp']}  FN={m['fn']}\n"
+                    f"  Acc={m['accuracy']:.4f}  F1={m['f1']:.4f}\n"
+                    f"  Prec={m['precision']:.4f}  Rec={m['recall']:.4f}\n"
+                    f"  AUROC={m['auroc']:.4f}  APS={m['aps']:.4f}\n"
+                    f"  MCC={m['mcc']:.4f}\n"
                     f"{'═'*60}\n",
                     flush=True,
                 )
@@ -409,12 +408,8 @@ class DiscriminatorTrainer:
                     "eval/precision": m["precision"],
                     "eval/recall": m["recall"],
                     "eval/auroc": m["auroc"],
-                    "eval/auprc": m["auprc"],
+                    "eval/aps": m["aps"],
                     "eval/mcc": m["mcc"],
-                    "eval/tp": m["tp"],
-                    "eval/tn": m["tn"],
-                    "eval/fp": m["fp"],
-                    "eval/fn": m["fn"],
                 }, step=epoch)
 
                 if m["auroc"] > best_auroc:
@@ -527,7 +522,7 @@ if __name__ == "__main__":
     # ── Paths (update these) ──────────────────────────────────────────────
     DTEA_CKPT = os.path.join(
         PROJ_HOME,
-        "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/30/best_composite_0.9911_0.9977_epoch11.pth"
+        "checkpoints/TargetScan/TwoTowerTransformer/CNN-tokenized/Manakov2022_train/50/best_binding_aps_0.8357_epoch14.pth"
     )
     INPUT_DATA = os.path.join(
         PROJ_HOME,
