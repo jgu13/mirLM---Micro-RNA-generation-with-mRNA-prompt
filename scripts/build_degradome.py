@@ -1,5 +1,5 @@
 """
-Build 30-nt mRNA windows around degradome cleavage sites with randomized positioning.
+Build mRNA windows around degradome cleavage sites with randomized positioning.
 
 Inputs:
   - Degradome TSV with at least: transcript, cleaveLocus, miRNAname, miRNAseq, 

@@ -1,7 +1,7 @@
 """
 Plot DTEA (MiRformer) scalability benchmark results.
 
-Reads benchmark_results.tsv (with attention_mode column) and produces:
+Reads benchmark_results.tsv (with model column) and produces:
   1. Inference time comparison: sliding-window vs full attention
   2. Peak GPU memory comparison: sliding-window vs full attention
 
@@ -56,6 +56,11 @@ STYLES = {
         "marker": "s",
         "label": "Full attention",
     },
+    "RNAhybrid": {
+        "color": "#50C878",
+        "marker": "^",
+        "label": "RNAhybrid"
+    }
 }
 
 
@@ -64,7 +69,7 @@ def plot_time(df_valid, df_oom, all_lengths, output_path, dpi=300):
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     for mode, style in STYLES.items():
-        subset = df_valid[df_valid["attention_mode"] == mode]
+        subset = df_valid[df_valid["model"] == mode]
         if subset.empty:
             continue
 
@@ -79,7 +84,7 @@ def plot_time(df_valid, df_oom, all_lengths, output_path, dpi=300):
                     label=style["label"])
 
         # Mark OOM: dashed extension from last valid point to first OOM length
-        oom_subset = df_oom[df_oom["attention_mode"] == mode]
+        oom_subset = df_oom[df_oom["model"] == mode]
         if not oom_subset.empty and len(lengths) > 0:
             first_oom_len = int(oom_subset["mrna_length"].iloc[0])
             last_time     = times[-1]
@@ -121,7 +126,7 @@ def plot_memory(df_valid, df_oom, all_lengths, output_path, dpi=300):
     use_gb  = max_mem > 4000
 
     for mode, style in STYLES.items():
-        subset = df_valid[df_valid["attention_mode"] == mode]
+        subset = df_valid[df_valid["model"] == mode]
         if subset.empty:
             continue
 
@@ -140,7 +145,7 @@ def plot_memory(df_valid, df_oom, all_lengths, output_path, dpi=300):
                     label=style["label"])
 
         # Mark OOM: dashed extension from last valid point to first OOM length
-        oom_subset = df_oom[df_oom["attention_mode"] == mode]
+        oom_subset = df_oom[df_oom["model"] == mode]
         if not oom_subset.empty and len(lengths) > 0:
             first_oom_len = int(oom_subset["mrna_length"].iloc[0])
             last_mem      = mems[-1]
@@ -153,12 +158,12 @@ def plot_memory(df_valid, df_oom, all_lengths, output_path, dpi=300):
                         textcoords="offset points", xytext=(8, -2),
                         fontsize=9, color=style["color"], fontweight="bold")
 
-    ylabel  = "Peak GPU memory (GB)" if use_gb else "Peak GPU memory (MB)"
+    ylabel  = "Peak GPU/CPU memory (GB)" if use_gb else "Peak GPU/CPU memory (MB)"
     fmt_str = "%.1f" if use_gb else "%.0f"
 
     ax.set_xlabel("mRNA sequence length (nt)", fontsize=12)
     ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_title("Peak GPU Memory vs. mRNA Length", fontsize=13, pad=10)
+    ax.set_title("Peak GPU/CPU Memory vs. mRNA Length", fontsize=13, pad=10)
 
     ax.set_xticks(all_lengths)
     ax.set_xticklabels([format_length_label(l) for l in all_lengths], fontsize=10)
@@ -187,7 +192,7 @@ def main():
     print(df_valid.to_string(index=False))
     if not df_oom.empty:
         print(f"\nOOM entries:")
-        print(df_oom[["attention_mode", "mrna_length"]].to_string(index=False))
+        print(df_oom[["model", "mrna_length"]].to_string(index=False))
     print()
 
     # Collect all unique lengths for x-axis (union of both modes)

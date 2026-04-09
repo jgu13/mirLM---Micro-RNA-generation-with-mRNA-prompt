@@ -291,7 +291,7 @@ def main():
         mirfam_map = load_mir_family_map(args.mir_family)
 
     # Load degradome
-    degr = pd.read_csv(args.degradome, sep=None, engine="python")
+    degr = pd.read_csv(args.degradome, sep='\t', engine="python")
     # normalize column names (keep originals for output)
     tcol = args.transcript_col
     ccol = args.cleave_col
